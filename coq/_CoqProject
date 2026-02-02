@@ -13,4 +13,5 @@ Theorem2/FADD.v
 Theorem2/CAS.v
 
 Theorem3/ConsensusNumber.v
+Theorem3/FailoverConsensus.v
 Theorem3/Hierarchy.v
