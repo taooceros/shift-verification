@@ -108,18 +108,45 @@ Proof.
   - trivial.
 Qed.
 
-(** ** Modeling as Standard 2-Process Consensus *)
+(** ** Failover as an Instance of SimplifiedConsensus2 *)
 
-(** We can map failover to the standard consensus problem: *)
+(** We can directly instantiate the SimplifiedConsensus2 structure
+    to show failover IS a 2-consensus problem. *)
 
-Definition FailoverAsConsensus : Type := ConsensusObject 2.
+(** First, we need a proof that Commit ≠ Abort *)
+Lemma commit_neq_abort : Commit <> Abort.
+Proof. discriminate. Qed.
 
-(** Process 0 = Past, Process 1 = Future *)
-Definition past_pid : nat := 0.
-Definition future_pid : nat := 1.
+Definition FailoverAsSimplifiedConsensus : SimplifiedConsensus2 := {|
+  (* Observation is just the final memory state *)
+  Observation := Memory;
 
-(** The proposed values are the knowledge/observations *)
-(** The decided value must be the correct FailoverDecision *)
+  (* Both states can result in the same memory (ABA problem) *)
+  observe_A := init_memory;   (* After CAS executed + ABA reset *)
+  observe_B := init_memory;   (* After CAS not executed *)
+
+  (* Decisions *)
+  DecisionType := FailoverDecision;
+  decision_for_A := Commit;   (* Was executed -> don't retry *)
+  decision_for_B := Abort;    (* Was not executed -> retry *)
+  decisions_differ := commit_neq_abort;
+|}.
+
+(** The key theorem: failover's observations are ambiguous *)
+Lemma failover_observations_equal :
+  FailoverAsSimplifiedConsensus.(observe_A) = FailoverAsSimplifiedConsensus.(observe_B).
+Proof.
+  reflexivity.
+Qed.
+
+(** Therefore, by the general theorem, no solver exists *)
+Theorem failover_unsolvable_via_consensus2 :
+  forall s : Solver FailoverAsSimplifiedConsensus,
+    ~ solver_correct FailoverAsSimplifiedConsensus s.
+Proof.
+  apply ambiguous_observation_unsolvable.
+  exact failover_observations_equal.
+Qed.
 
 (** ** The Consensus Number Barrier *)
 
