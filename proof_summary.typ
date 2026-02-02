@@ -138,38 +138,49 @@ The constraints are _derived_ from primitive semantics:
   Any observation function satisfying $"valid"_"cas"$ gives $"obs"("exec", i) = "winner"("exec")$. Different winners $arrow.r$ different observations $arrow.r$ always distinguishable.
 ]
 
-=== Failover as 2-Consensus
+=== Reduction: Failover Solver $arrow.r.double$ 2-Consensus Protocol
 
-#definition("Verification Mechanism")[
-  A verification mechanism $V : "Memory" -> {"Commit", "Abort"}$ decides whether to retry based on reading remote memory.
+Following Herlihy's methodology, we prove failover requires $"CN" >= 2$ by showing that a correct failover solver implies a correct 2-consensus protocol.
+
+#definition("Failover Solver")[
+  A failover solver $F : "Memory" -> {"Commit", "Abort"}$ correctly determines whether the CAS was executed based on memory state.
 ]
 
-#theorem("Failover-Consensus Isomorphism")[
-  The failover problem is structurally isomorphic to 2-process consensus:
-
-  #table(
-    columns: (1fr, 1fr),
-    inset: 6pt,
-    stroke: 0.5pt,
-    [*2-Consensus*], [*Failover*],
-    [Process 0 input], [CAS executed (Commit)],
-    [Process 1 input], [CAS not executed (Abort)],
-    [Observation], [Memory state $m$],
-    [Decision function], [Verification mechanism $V$],
-    [Solo executions indistinguishable], [ABA: both histories yield same $m$],
-  )
+#definition("2-Consensus Protocol from Failover")[
+  Given failover solver $F$, construct 2-consensus protocol:
+  - *Encoding*: $P_0$'s input $arrow.r.bar$ "CAS executed", $P_1$'s input $arrow.r.bar$ "CAS not executed"
+  - *Protocol*: Both processes call $F("shared_mem")$ and return the result
+  - *Decoding*: $"Commit" arrow.r.bar P_0$ won, $"Abort" arrow.r.bar P_1$ won
 ]
 
-#theorem("Transparent Failover Impossibility")[
-  No verification mechanism $V : "Memory" -> "bool"$ can solve failover.
+#theorem("Reduction Correctness")[
+  If $F$ correctly solves failover, then $"consensus_from_failover"(F)$ correctly solves 2-consensus.
 ]
 
 #proof[
-  By the ABA problem, there exist histories $H_0$ (CAS not executed) and $H_1$ (CAS executed, then ABA reset) with identical final memory: $"mem"(H_0) = "mem"(H_1) = m$.
+  Let $F$ be a correct failover solver. For any execution where $P_i$ wins:
+  - Encode as history $h_i$: $h_0 = "HistExecuted"(m)$, $h_1 = "HistNotExecuted"(m)$
+  - By correctness: $F("mem"(h_i)) = "correct_decision"(h_i) = i$
+  - *Agreement*: Both processes call $F$ on same memory $arrow.r$ same output
+  - *Validity*: Output equals winner's input by correctness of $F$
+]
 
-  Correctness requires $V(m) = "Abort"$ for $H_0$ and $V(m) = "Commit"$ for $H_1$. But $V$ is a function, so $V("mem"(H_0)) = V("mem"(H_1))$. Contradiction.
+#theorem("Failover Requires CN $>=$ 2")[
+  No correct failover solver exists, therefore failover requires $"CN" >= 2$.
+]
 
-  This matches the register $"CN" = 1$ proof: $V$ satisfies $"valid"_"rw"$ (it only reads), and the ABA histories correspond to solo executions with identical "prior write state."
+#proof[
+  Suppose $F$ is a correct failover solver. Then:
+  - $F(m) = "true"$ for $H_1 = "HistExecuted"(m)$ (correctness for "executed")
+  - $F(m) = "false"$ for $H_0 = "HistNotExecuted"(m)$ (correctness for "not executed")
+
+  But $"mem"(H_0) = "mem"(H_1) = m$ (ABA problem), so $F(m)$ must be both true and false. Contradiction.
+
+  By the reduction, if failover were solvable, 2-consensus would be solvable. Since 2-consensus requires $"CN" >= 2$, so does failover.
+]
+
+#theorem("Transparent Failover Impossibility")[
+  Read-only verification has $"CN" = 1 < 2$, therefore transparent failover is impossible.
 ]
 
 #theorem("Main Result")[

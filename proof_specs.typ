@@ -747,89 +747,93 @@ The consensus numbers are not mere definitions---they are _proven_ via the obser
   The backup RNIC _can_ execute CAS. But it _cannot decide whether_ to execute it correctly, because that decision requires consensus, which reads alone cannot provide.
 ]
 
-== Formal Reduction: Failover IS 2-Consensus (`Theorem3/FailoverConsensus.v`)
+== Formal Reduction: Failover Solver $arrow.r$ 2-Consensus (`Theorem3/FailoverConsensus.v`)
 
-The key contribution is proving that failover is not merely _related to_ consensus, but IS an instance of 2-process consensus---and the impossibility follows FROM the consensus number framework.
+Following Herlihy's methodology, we prove failover requires CN $>=$ 2 by constructing a reduction: a correct failover solver implies a correct 2-consensus protocol.
 
-#spec-box("Structural Isomorphism")[
-  #table(
-    columns: (1fr, 1fr),
-    inset: 8pt,
-    [*Consensus Framework*], [*Failover Instance*],
-    [`valid_rw_observation`], [`VerificationMechanism` reads memory],
-    [`solo_0` (P0 runs alone)], [`H1` (CAS executed)],
-    [`solo_1` (P1 runs alone)], [`H0` (CAS not executed)],
-    [Empty prior write history], [Same memory (ABA problem)],
-    [Different inputs (0 vs 1)], [Different decisions (Commit vs Abort)],
-    [CN(Register) = 1 < 2], [Cannot distinguish H0 from H1],
-  )
-]
-
-#spec-box("Verification Mechanism AS Consensus Protocol")[
+#spec-box("The Reduction Construction")[
   ```coq
-  (** A verification mechanism is any function from memory to decision *)
-  Definition VerificationMechanism := Memory -> bool.
+  (** Encode 2-consensus as failover *)
+  Definition encode_as_history (winner_is_p0 : bool) : History :=
+    if winner_is_p0 then HistExecuted shared_mem    (* P0 won *)
+                    else HistNotExecuted shared_mem. (* P1 won *)
 
-  (** Convert to consensus observation function *)
-  Definition vm_to_observation (V : VerificationMechanism) : list nat -> nat -> nat :=
-    fun exec proc => if V init_mem then 1 else 0.
-
-  (** VerificationMechanism satisfies valid_rw_observation because:
-      - It can only READ memory
-      - Memory is the same (init_mem) for both histories
-      - Therefore observations are identical *)
+  (** Build 2-consensus protocol from failover solver *)
+  Definition consensus_from_failover (F : FailoverSolver) : TwoConsensusProtocol := {|
+    decide_0 := fun obs => F shared_mem;
+    decide_1 := fun obs => F shared_mem;
+  |}.
   ```
 ]
 
-#spec-box("The ABA Witness = Solo Executions")[
+#spec-box("Reduction Correctness")[
   ```coq
-  (** Failover histories correspond to solo executions *)
-  Definition failover_exec_committed : list nat := [0].  (* = solo_0 *)
-  Definition failover_exec_aborted : list nat := [1].    (* = solo_1 *)
-
-  (** Both have the same "observation" (memory state) - the ABA problem *)
-  Lemma failover_same_observation :
-    forall V : VerificationMechanism,
-      vm_to_observation V failover_exec_committed 0 =
-      vm_to_observation V failover_exec_aborted 1.
-  Proof. reflexivity. (* Both read init_mem *) Qed.
-
-  (** But correct decisions differ *)
-  Lemma failover_different_requirements :
-    winner failover_exec_committed <> winner failover_exec_aborted.
-  Proof. discriminate. (* 0 ≠ 1 *) Qed.
+  (** If F solves failover, consensus_from_failover(F) solves 2-consensus *)
+  Theorem failover_solver_implies_consensus :
+    forall F : FailoverSolver,
+      (forall h, F (final_memory h) = correct_decision_for h) ->
+      forall winner_is_p0 : bool,
+        let proto := consensus_from_failover F in
+        proto.(decide_0) true = winner_is_p0.  (* Decides winner correctly *)
+  Proof.
+    intros F Hcorrect winner_is_p0. simpl.
+    specialize (Hcorrect (encode_as_history winner_is_p0)).
+    destruct winner_is_p0; exact Hcorrect.
+  Qed.
   ```
 ]
 
-#spec-box("The Chain of Reasoning")[
+#spec-box("Impossibility via Contrapositive")[
   ```coq
-  (** 1. Reads have CN = 1 (via valid_rw_observation) *)
-  Theorem reads_have_cn_1_verified : rdma_read_cn = cn_one.
-
-  (** 2. CN = 1 cannot solve 2-consensus *)
-  Theorem cn_1_insufficient_for_2consensus : cn_lt cn_one (Some 2).
-
-  (** 3. Failover IS 2-consensus (via structural isomorphism) *)
-  Theorem failover_is_rw_consensus_instance : ...
-
-  (** 4. Therefore, failover is impossible *)
-  Corollary transparent_failover_impossible_via_cn :
-    rdma_read_cn = cn_one ->
-    cn_lt cn_one (Some 2) ->
-    forall m V, ~ solves_failover V.
+  (** No correct failover solver exists *)
+  Theorem no_failover_solver :
+    ~ exists F, forall h, F (final_memory h) = correct_decision_for h.
+  Proof.
+    intros [F Hcorrect].
+    specialize (Hcorrect (HistExecuted shared_mem)) as H_exec.
+    specialize (Hcorrect (HistNotExecuted shared_mem)) as H_not.
+    (* H_exec: F shared_mem = true;  H_not: F shared_mem = false *)
+    rewrite H_exec in H_not. discriminate.
+  Qed.
   ```
 ]
 
 #proof-box[
-  *Why This Connection Matters*:
+  *The Herlihy-Style Argument*:
 
-  The failover impossibility is NOT just an ad-hoc ABA argument. It is a _consequence_ of Herlihy's consensus hierarchy:
+  1. *Encoding*: Map 2-consensus inputs to failover histories
+     - $P_0$ input (true) $arrow.r.bar$ `HistExecuted` (CAS ran)
+     - $P_1$ input (false) $arrow.r.bar$ `HistNotExecuted` (CAS didn't run)
 
-  1. `valid_rw_observation` captures what read-only protocols can observe
-  2. This constraint PROVES CN(Register) = 1
-  3. `VerificationMechanism` satisfies `valid_rw_observation` (it only reads)
-  4. ABA histories match solo executions (same "prior state", different requirements)
-  5. Therefore, failover impossibility follows FROM CN(Read) = 1 < 2
+  2. *Protocol*: Use failover solver as consensus oracle
+     - Both processes call $F("shared_mem")$
+     - Agreement: same input $arrow.r$ same output
+     - Validity: $F$ returns winner's input by correctness
+
+  3. *Contradiction*: ABA makes $F$ impossible
+     - `HistExecuted(m)` and `HistNotExecuted(m)` have same memory
+     - $F(m)$ must be both true AND false
+
+  4. *Conclusion*: Failover requires CN $>=$ 2
+     - Read-only verification has CN = 1
+     - Therefore, transparent failover is impossible
+]
+
+#spec-box("The Complete Chain")[
+  ```coq
+  (** 1. Reads have CN = 1 (proven via valid_rw_observation) *)
+  Theorem reads_have_cn_1_verified : rdma_read_cn = cn_one.
+
+  (** 2. Failover solver → 2-consensus (reduction above) *)
+  Theorem failover_solver_implies_consensus : ...
+
+  (** 3. No failover solver exists (ABA contradiction) *)
+  Theorem no_failover_solver : ~ exists F, solves_failover F.
+
+  (** 4. Transparent failover is impossible *)
+  Theorem transparent_cas_failover_impossible :
+    forall tf, verification_via_reads tf -> ~ provides_reliable_cas tf.
+  ```
 ]
 
 #pagebreak()
