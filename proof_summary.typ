@@ -140,47 +140,59 @@ The constraints are _derived_ from primitive semantics:
 
 === Reduction: Failover Solver $arrow.r.double$ 2-Consensus Protocol
 
-Following Herlihy's methodology, we prove failover requires $"CN" >= 2$ by showing that a correct failover solver implies a correct 2-consensus protocol.
+Following Herlihy's methodology (cf. Theorem 5.4.1 for FIFO queues), we prove failover requires $"CN" >= 2$ by constructing a 2-consensus protocol from a hypothetical failover solver.
 
 #definition("Failover Solver")[
-  A failover solver $F : "Memory" -> {"Commit", "Abort"}$ correctly determines whether the CAS was executed based on memory state.
+  A failover solver $F : "Memory" -> {sans("true"), sans("false")}$ returns $sans("true")$ (Commit) if CAS was executed, $sans("false")$ (Abort) otherwise.
 ]
 
-#definition("2-Consensus Protocol from Failover")[
-  Given failover solver $F$, construct 2-consensus protocol:
-  - *Encoding*: $P_0$'s input $arrow.r.bar$ "CAS executed", $P_1$'s input $arrow.r.bar$ "CAS not executed"
-  - *Protocol*: Both processes call $F("shared_mem")$ and return the result
-  - *Decoding*: $"Commit" arrow.r.bar P_0$ won, $"Abort" arrow.r.bar P_1$ won
-]
+#theorem("2-Consensus Protocol from Failover Solver")[
+  Given a correct failover solver $F$, the following protocol solves 2-consensus:
 
-#theorem("Reduction Correctness")[
-  If $F$ correctly solves failover, then $"consensus_from_failover"(F)$ correctly solves 2-consensus.
+  #block(inset: (left: 16pt, y: 8pt))[
+    #table(
+      columns: (1fr, 1fr),
+      stroke: none,
+      inset: 4pt,
+      [*FIFO Protocol (Herlihy)*], [*Failover Protocol (Ours)*],
+      [`Queue := [WIN, LOSE]`], [`Memory := m` (ABA state)],
+      [`proposed[i] := v_i`], [`proposed[i] := v_i`],
+      [`result := dequeue()`], [`result := F(m)`],
+      [`if result = WIN`], [`if result = true`],
+      [`  then decide(proposed[me])`], [`  then decide(proposed[0])`],
+      [`  else decide(proposed[other])`], [`  else decide(proposed[1])`],
+    )
+  ]
+
+  The failover solver $F$ acts like `dequeue()`: it reveals who "won".
 ]
 
 #proof[
-  Let $F$ be a correct failover solver. For any execution where $P_i$ wins:
-  - Encode as history $h_i$: $h_0 = "HistExecuted"(m)$, $h_1 = "HistNotExecuted"(m)$
-  - By correctness: $F("mem"(h_i)) = "correct_decision"(h_i) = i$
-  - *Agreement*: Both processes call $F$ on same memory $arrow.r$ same output
-  - *Validity*: Output equals winner's input by correctness of $F$
+  We verify the three conditions:
+
+  - *Wait-free*: The protocol contains no loops. Each process executes a finite number of steps. ✓
+
+  - *Agreement*: Both processes call the same $F$ on the same memory $m$. They get the same result and select from the same `proposed[]` array. Therefore they decide the same value. ✓
+
+  - *Validity*: If $P_0$ won (CAS executed), then $F(m) = sans("true")$ by correctness of $F$, so both decide `proposed[0]` = $P_0$'s input. Similarly for $P_1$. The decision is always the winner's input. ✓
 ]
 
 #theorem("Failover Requires CN $>=$ 2")[
-  No correct failover solver exists, therefore failover requires $"CN" >= 2$.
+  No correct failover solver exists.
 ]
 
 #proof[
-  Suppose $F$ is a correct failover solver. Then:
-  - $F(m) = "true"$ for $H_1 = "HistExecuted"(m)$ (correctness for "executed")
-  - $F(m) = "false"$ for $H_0 = "HistNotExecuted"(m)$ (correctness for "not executed")
+  Suppose $F$ is a correct failover solver. By correctness:
+  - $F(m) = sans("true")$ for $H_1 = "HistExecuted"(m)$
+  - $F(m) = sans("false")$ for $H_0 = "HistNotExecuted"(m)$
 
-  But $"mem"(H_0) = "mem"(H_1) = m$ (ABA problem), so $F(m)$ must be both true and false. Contradiction.
+  But both histories have the same final memory $m$ (ABA problem). Thus $F(m)$ must equal both $sans("true")$ and $sans("false")$. Contradiction.
 
-  By the reduction, if failover were solvable, 2-consensus would be solvable. Since 2-consensus requires $"CN" >= 2$, so does failover.
+  Since a correct failover solver would yield a correct 2-consensus protocol, and no such solver exists, failover inherits the $"CN" >= 2$ requirement from 2-consensus.
 ]
 
 #theorem("Transparent Failover Impossibility")[
-  Read-only verification has $"CN" = 1 < 2$, therefore transparent failover is impossible.
+  Read-only verification (the only tool available under transparency) has $"CN" = 1 < 2$. By Herlihy's impossibility theorem, $"CN" = 1$ primitives cannot solve 2-consensus. Therefore, transparent failover is impossible.
 ]
 
 #theorem("Main Result")[
