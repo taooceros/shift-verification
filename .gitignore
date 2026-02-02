@@ -23,9 +23,6 @@ result
 # Claude settings
 .claude/
 
-# Typst
-*.pdf
-
 # Editor
 *~
 \#*\#
