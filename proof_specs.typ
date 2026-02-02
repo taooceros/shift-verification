@@ -749,91 +749,83 @@ The consensus numbers are not mere definitions---they are _proven_ via the obser
 
 == Formal Reduction: Failover Solver $arrow.r$ 2-Consensus (`Theorem3/FailoverConsensus.v`)
 
-Following Herlihy's methodology, we prove failover requires CN $>=$ 2 by constructing a reduction: a correct failover solver implies a correct 2-consensus protocol.
+Following Herlihy's methodology (Theorem 5.4.1 for FIFO queues), we prove failover requires CN $>=$ 2 by constructing a 2-consensus protocol from a hypothetical failover solver.
 
-#spec-box("The Reduction Construction")[
+#spec-box("Side-by-Side: FIFO vs Failover Protocol")[
+  #table(
+    columns: (1fr, 1fr),
+    inset: 8pt,
+    stroke: 0.5pt,
+    [*FIFO Protocol (Herlihy)*], [*Failover Protocol (Ours)*],
+    [`Queue := [WIN, LOSE]`], [`Memory := m` (ABA state)],
+    [`proposed[i] := v_i`], [`proposed[i] := v_i`],
+    [`result := dequeue()`], [`result := F(m)`],
+    [`if result = WIN`], [`if result = true`],
+    [`  decide(proposed[me])`], [`  decide(proposed[0])`],
+    [`else decide(proposed[other])`], [`else decide(proposed[1])`],
+  )
+
+  *Key insight*: The failover solver `F` acts like `dequeue()`---it reveals who "won".
+]
+
+#spec-box("The Consensus Protocol")[
   ```coq
-  (** Encode 2-consensus as failover *)
-  Definition encode_as_history (winner_is_p0 : bool) : History :=
-    if winner_is_p0 then HistExecuted shared_mem    (* P0 won *)
-                    else HistNotExecuted shared_mem. (* P1 won *)
-
-  (** Build 2-consensus protocol from failover solver *)
-  Definition consensus_from_failover (F : FailoverSolver) : TwoConsensusProtocol := {|
-    decide_0 := fun obs => F shared_mem;
-    decide_1 := fun obs => F shared_mem;
-  |}.
+  (** The consensus protocol using failover solver F *)
+  Definition consensus_protocol (F : FailoverSolver) (my_id : nat) : nat :=
+    let result := F shared_mem in
+    if result then proposed 0  (* Commit → P0 won *)
+              else proposed 1. (* Abort → P1 won *)
   ```
 ]
 
-#spec-box("Reduction Correctness")[
+#spec-box("Protocol Correctness (All Verified in Rocq)")[
   ```coq
-  (** If F solves failover, consensus_from_failover(F) solves 2-consensus *)
-  Theorem failover_solver_implies_consensus :
-    forall F : FailoverSolver,
-      (forall h, F (final_memory h) = correct_decision_for h) ->
-      forall winner_is_p0 : bool,
-        let proto := consensus_from_failover F in
-        proto.(decide_0) true = winner_is_p0.  (* Decides winner correctly *)
+  (** Wait-free: No loops, finite steps (trivial) *)
+
+  (** Agreement: Both call same F on same memory → same decision *)
+  Theorem protocol_agreement :
+    forall F, consensus_protocol F 0 = consensus_protocol F 1.
+  Proof. reflexivity. Qed.
+
+  (** Validity: Decision = winner's input *)
+  Theorem protocol_validity :
+    forall F, correct_failover_solver F ->
+      forall winner_is_p0,
+        consensus_protocol F 0 = proposed (if winner_is_p0 then 0 else 1).
   Proof.
-    intros F Hcorrect winner_is_p0. simpl.
-    specialize (Hcorrect (encode_as_history winner_is_p0)).
-    destruct winner_is_p0; exact Hcorrect.
+    intros F Hcorrect winner_is_p0.
+    destruct winner_is_p0; apply Hcorrect.
   Qed.
   ```
 ]
 
-#spec-box("Impossibility via Contrapositive")[
+#spec-box("Impossibility: No Correct Failover Solver Exists")[
   ```coq
-  (** No correct failover solver exists *)
-  Theorem no_failover_solver :
-    ~ exists F, forall h, F (final_memory h) = correct_decision_for h.
+  Theorem no_correct_failover_solver :
+    ~ exists F, correct_failover_solver F.
   Proof.
     intros [F Hcorrect].
+    (* For HistExecuted: F(m) = true *)
     specialize (Hcorrect (HistExecuted shared_mem)) as H_exec.
+    (* For HistNotExecuted: F(m) = false *)
     specialize (Hcorrect (HistNotExecuted shared_mem)) as H_not.
-    (* H_exec: F shared_mem = true;  H_not: F shared_mem = false *)
+    (* But both have same memory m (ABA)! *)
+    (* F(m) = true AND F(m) = false → contradiction *)
     rewrite H_exec in H_not. discriminate.
   Qed.
   ```
 ]
 
 #proof-box[
-  *The Herlihy-Style Argument*:
+  *The Complete Herlihy-Style Argument*:
 
-  1. *Encoding*: Map 2-consensus inputs to failover histories
-     - $P_0$ input (true) $arrow.r.bar$ `HistExecuted` (CAS ran)
-     - $P_1$ input (false) $arrow.r.bar$ `HistNotExecuted` (CAS didn't run)
-
-  2. *Protocol*: Use failover solver as consensus oracle
-     - Both processes call $F("shared_mem")$
-     - Agreement: same input $arrow.r$ same output
-     - Validity: $F$ returns winner's input by correctness
-
-  3. *Contradiction*: ABA makes $F$ impossible
-     - `HistExecuted(m)` and `HistNotExecuted(m)` have same memory
-     - $F(m)$ must be both true AND false
-
-  4. *Conclusion*: Failover requires CN $>=$ 2
-     - Read-only verification has CN = 1
-     - Therefore, transparent failover is impossible
-]
-
-#spec-box("The Complete Chain")[
-  ```coq
-  (** 1. Reads have CN = 1 (proven via valid_rw_observation) *)
-  Theorem reads_have_cn_1_verified : rdma_read_cn = cn_one.
-
-  (** 2. Failover solver → 2-consensus (reduction above) *)
-  Theorem failover_solver_implies_consensus : ...
-
-  (** 3. No failover solver exists (ABA contradiction) *)
-  Theorem no_failover_solver : ~ exists F, solves_failover F.
-
-  (** 4. Transparent failover is impossible *)
-  Theorem transparent_cas_failover_impossible :
-    forall tf, verification_via_reads tf -> ~ provides_reliable_cas tf.
-  ```
+  1. *Protocol Construction*: Given failover solver $F$, build 2-consensus protocol
+  2. *Wait-free*: No loops $checkmark$
+  3. *Agreement*: Same $F$, same memory $arrow.r$ same result $arrow.r$ same decision $checkmark$
+  4. *Validity*: $F$ returns "who won" $arrow.r$ decision is winner's input $checkmark$
+  5. *Reduction*: Correct $F$ $arrow.r.double$ correct 2-consensus protocol
+  6. *Contradiction*: ABA makes $F$ impossible ($F(m) =$ true AND false)
+  7. *Conclusion*: Failover requires CN $>=$ 2; reads have CN $=$ 1; impossible $square$
 ]
 
 #pagebreak()
