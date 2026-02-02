@@ -1,0 +1,122 @@
+(** * Safety and Liveness Properties *)
+
+From Coq Require Import Arith.
+From Coq Require Import List.
+From ShiftVerification.Core Require Import Memory.
+From ShiftVerification.Core Require Import Operations.
+From ShiftVerification.Core Require Import Traces.
+Import ListNotations.
+
+(** ** Linearizability *)
+
+(** A history is a sequence of operation invocations and responses *)
+Inductive HistoryEvent : Type :=
+  | HInvoke : nat -> Op -> HistoryEvent    (* process id, operation *)
+  | HRespond : nat -> OpResult -> HistoryEvent.  (* process id, result *)
+
+Definition History := list HistoryEvent.
+
+(** A sequential specification: given initial memory and operation, what's the result? *)
+Definition SequentialSpec := Memory -> Op -> Memory * OpResult.
+
+(** The standard sequential spec for RDMA operations *)
+Definition rdma_seq_spec : SequentialSpec := exec_op.
+
+(** Extract history from a trace (simplified) *)
+Fixpoint trace_to_history (t : Trace) (pid : nat) : History :=
+  match t with
+  | [] => []
+  | EvSend op :: rest => HInvoke pid op :: trace_to_history rest pid
+  | EvCompletion op res :: rest => HRespond pid res :: trace_to_history rest pid
+  | _ :: rest => trace_to_history rest pid
+  end.
+
+(** A history is linearizable if there exists a legal sequential history
+    that is equivalent (same operations and results) and respects real-time order *)
+Definition Linearizable (h : History) (spec : SequentialSpec) : Prop :=
+  (* Simplified: we'll expand this in the actual proofs *)
+  True.  (* Placeholder - full definition requires more infrastructure *)
+
+(** ** At-Most-Once Semantics *)
+
+(** Operation equality *)
+Definition op_eq (op1 op2 : Op) : bool :=
+  match op1, op2 with
+  | OpWrite a1 v1, OpWrite a2 v2 => Nat.eqb a1 a2 && Nat.eqb v1 v2
+  | OpRead a1, OpRead a2 => Nat.eqb a1 a2
+  | OpFADD a1 d1, OpFADD a2 d2 => Nat.eqb a1 a2 && Nat.eqb d1 d2
+  | OpCAS a1 e1 n1, OpCAS a2 e2 n2 => Nat.eqb a1 a2 && Nat.eqb e1 e2 && Nat.eqb n1 n2
+  | _, _ => false
+  end.
+
+(** Count how many times an operation was executed *)
+Fixpoint execution_count (t : Trace) (op : Op) : nat :=
+  match t with
+  | [] => 0
+  | EvExecute op' _ :: rest =>
+      (if op_eq op op' then 1 else 0) + execution_count rest op
+  | _ :: rest => execution_count rest op
+  end.
+
+(** At-most-once: each operation is executed at most once *)
+Definition AtMostOnce (t : Trace) : Prop :=
+  forall op, execution_count t op <= 1.
+
+(** Exactly-once: each sent operation is executed exactly once *)
+Definition ExactlyOnce (t : Trace) : Prop :=
+  forall op,
+    In (EvSend op) t ->
+    execution_count t op = 1.
+
+(** ** Safety *)
+
+(** A system is safe if all executions are linearizable *)
+Definition Safe (traces : Trace -> Prop) (spec : SequentialSpec) : Prop :=
+  forall t,
+    traces t ->
+    Linearizable (trace_to_history t 0) spec.
+
+(** ** Liveness *)
+
+(** Every sent operation eventually completes *)
+Definition Live (t : Trace) : Prop :=
+  forall op,
+    In (EvSend op) t ->
+    op_completed t op.
+
+(** ** Overlay Model *)
+
+(** An overlay is a function that decides whether to retransmit based on observations *)
+Definition RetransmitDecision := list SenderObs -> Op -> bool.
+
+(** Properties of a transparent overlay *)
+Record TransparentOverlay := {
+  decide_retransmit : RetransmitDecision;
+
+  (* Transparency: decision only depends on sender observations *)
+  decision_deterministic : forall obs1 obs2 op,
+    obs1 = obs2 ->
+    decide_retransmit obs1 op = decide_retransmit obs2 op;
+}.
+
+(** ** The Core Dilemma *)
+
+(** If an overlay retransmits after timeout, it may violate safety *)
+Definition retransmit_may_violate_safety (overlay : TransparentOverlay) : Prop :=
+  exists t1 t2 op,
+    (* Traces are indistinguishable *)
+    sender_indistinguishable t1 t2 /\
+    (* Sender sees timeout in both *)
+    sender_saw_timeout t1 op /\
+    sender_saw_timeout t2 op /\
+    (* Retransmission is safe in t1 but unsafe in t2 *)
+    (~ op_executed t1 op) /\  (* t1: packet was lost, retransmit is safe *)
+    (op_executed t2 op).       (* t2: packet arrived, retransmit causes double execution *)
+
+(** If an overlay doesn't retransmit after timeout, it may violate liveness *)
+Definition no_retransmit_may_violate_liveness (overlay : TransparentOverlay) : Prop :=
+  exists t op,
+    sender_saw_timeout t op /\
+    ~ op_executed t op /\
+    overlay.(decide_retransmit) (sender_view t) op = false ->
+    ~ op_completed t op.

@@ -1,0 +1,16 @@
+-Q . ShiftVerification
+
+Core/Memory.v
+Core/Operations.v
+Core/Traces.v
+Core/Properties.v
+
+Theorem1/Indistinguishability.v
+Theorem1/Impossibility.v
+
+Theorem2/Atomics.v
+Theorem2/FADD.v
+Theorem2/CAS.v
+
+Theorem3/ConsensusNumber.v
+Theorem3/Hierarchy.v
