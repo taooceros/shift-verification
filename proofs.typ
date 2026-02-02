@@ -44,7 +44,7 @@
 == Preliminary Definitions
 
 #definition("Silent Receiver")[
-  A receiver $R$ that does not send application-level acknowledgments; the sender $S$ relies solely on transport-level signals (e.g., WQE completion status).
+  A receiver $R$ that does not send application-level acknowledgments; the sender $S$ relies solely on transport-level signals (e.g., WQE completion status). Formally: no `AppAckEvent` appears in any valid trace.
 ]
 
 #definition("Memory Reuse")[
@@ -52,14 +52,42 @@
 ]
 
 #definition("Transparent Overlay")[
-  A failover mechanism that operates without modifying application semantics or allocating additional persistent state in remote memory.
+  A failover mechanism that operates without modifying application semantics or allocating additional persistent state in remote memory. Decisions are based solely on `sender_view(T)`.
 ]
 
 #definition("Exactly-Once Delivery")[
   A transport guarantee ensuring each message is delivered exactly once, despite failures.
 ]
 
+#definition("Sender View")[
+  The projection function $pi_S : "Trace" -> "SenderObs"$ that extracts only what the sender can observe: send confirmations, completions, and timeouts. This is the "crown jewel" abstraction---the sender's decision must be a function of this projection alone.
+]
+
+#definition("Execution Count")[
+  For operation $"op"$ in trace $T$: $"exec_count"(T, "op") = |{e in T : e = "EvExecute"("op", r)}|$. Safety requires $"exec_count" <= 1$.
+]
+
 == Theorem 1: Impossibility of Safe Retransmission for Pure-Write Protocols
+
+=== Formal Specification
+
+#block(
+  stroke: 1pt + rgb("#666"),
+  inset: 10pt,
+  radius: 4pt,
+  [
+    *Assumptions:*
+    - `SilentReceiver`: $forall T, e. space e in T => not "AppAckEvent"(e)$
+    - `MemoryReuseAllowed`: $forall V_1, V_"new". space exists T. space "EvAppConsume" in T and "EvAppReuse" in T$
+    - `Transparent(overlay)`: $pi_S (T_1) = pi_S (T_2) => "decide"(T_1) = "decide"(T_2)$
+
+    *Properties:*
+    - `ProvidesSafety`: $"exec_count"(T, "op") <= 1$ (at-most-once)
+    - `ProvidesLiveness`: $not "executed"(T, "op") and "timeout"(T, "op") => "retransmit" = "true"$
+
+    *Theorem:* $not ("ProvidesSafety" and "ProvidesLiveness")$
+  ]
+)
 
 #theorem(title: "Impossibility of Safe Retransmission")[
   In a system with a Silent Receiver and Memory Reuse, no transparent Sender overlay can guarantee Safety (Linearizability) during failover if the transport does not provide Exactly-Once Delivery semantics.
@@ -107,6 +135,34 @@
 
 == Theorem 2: Violation of Linearizability for Retried Atomics
 
+=== Formal Specification
+
+#block(
+  stroke: 1pt + rgb("#666"),
+  inset: 10pt,
+  radius: 4pt,
+  [
+    *Case A: FADD Non-Idempotency*
+    ```
+    exec_fadd(m, addr, delta) = (m', old_val)
+      where m'[addr] = m[addr] + delta
+            old_val = m[addr]
+    ```
+    - After double execution: $v = v_0 + 2 dot "delta"$ instead of $v_0 + "delta"$
+    - Violates: `execution_count <= 1`
+
+    *Case B: CAS with ABA Problem*
+    ```
+    Trace: S.CAS(0→1) → P3.CAS(1→0) → S.CAS(0→1)  [retry]
+    ```
+    - Both S.CAS operations succeed (return `true, 0`)
+    - P3's successful modification is silently overwritten
+    - `execution_count(S.CAS) = 2` violates atomicity
+
+    *Key Insight:* "Retry is safe because duplicate CAS fails" is FALSE with concurrency.
+  ]
+)
+
 #theorem(title: "Non-Linearizability of Retried Atomics")[
   In a system with concurrent access and no receiver-side deduplication, a transparent overlay cannot guarantee Linearizability for RDMA Atomics under network failure.
 ]
@@ -146,6 +202,82 @@
 
 == Theorem 3: Consensus Hierarchy Impossibility
 
+=== Formal Specification: Failover as 2-Process Consensus
+
+The key insight is that failover coordination IS the 2-process consensus problem.
+
+#block(
+  stroke: 1pt + rgb("#666"),
+  inset: 10pt,
+  radius: 4pt,
+  [
+    *The Two "Processes":*
+    ```
+    Process := Past | Future
+    ```
+    - *Past*: Represents what actually happened to the original CAS
+    - *Future*: Represents the retry decision that must be made
+
+    *The Decision Space:*
+    ```
+    FailoverDecision := Commit | Abort
+      Commit: Original CAS executed; do NOT retry
+      Abort:  Original CAS not executed; retry is SAFE
+    ```
+
+    *Knowledge Asymmetry:*
+    ```
+    PastKnowledge := PastExecuted | PastNotExecuted
+    FutureObservation := FutureSeesTimeout | FutureSeesCompletion
+    ```
+
+    *The Dilemma (Two Indistinguishable Scenarios):*
+    #table(
+      columns: (auto, auto, auto, auto),
+      inset: 6pt,
+      align: horizon,
+      table.header([*Scenario*], [*Past*], [*Future Sees*], [*Correct Decision*]),
+      [1. Packet lost], [`NotExecuted`], [`Timeout`], [`Abort` (retry)],
+      [2. ACK lost], [`Executed`], [`Timeout`], [`Commit` (no retry)],
+    )
+
+    *Core Theorem:* No function $f : "FutureObservation" -> "Decision"$ is correct:
+    ```
+    ¬∃f. f(Timeout) = Abort ∧ f(Timeout) = Commit
+    ```
+    Since `Abort ≠ Commit`, no such $f$ exists.
+  ]
+)
+
+=== Consensus Number Analysis
+
+#block(
+  stroke: 1pt + rgb("#666"),
+  inset: 10pt,
+  radius: 4pt,
+  [
+    *Herlihy's Consensus Hierarchy:*
+    ```
+    cn(Read/Write Register) = 1
+    cn(Test-and-Set) = 2
+    cn(FADD) = 2
+    cn(CAS) = ∞
+    ```
+
+    *The Barrier:*
+    - Failover coordination requires 2-process consensus: $"CN" >= 2$
+    - Transparent overlay can only use reads: $"CN" = 1$
+    - $1 < 2$ ⟹ *Impossible*
+
+    *Why Backup RNIC Doesn't Help:*
+    ```
+    Backup CAN execute:  CAS(addr, expected, new)
+    Backup CANNOT solve: "Should I execute this CAS?"
+    ```
+    The decision problem has CN ≥ 2, but verification uses only reads (CN = 1).
+  ]
+)
+
 #theorem(title: "Consensus Hierarchy Barrier")[
   Transparent Failover for RDMA Atomics is impossible because it requires solving Consensus using only Registers.
 ]
@@ -179,3 +311,54 @@
   [2. Atomics], [Non-idempotency], [Linearizability violation],
   [3. Consensus], [Herlihy hierarchy], [Consensus number barrier],
 )
+
+== Coq Formalization Correspondence
+
+The following table maps specification elements to their Coq implementations:
+
+#table(
+  columns: (auto, auto, auto),
+  inset: 6pt,
+  align: horizon,
+  table.header([*Concept*], [*Coq Module*], [*Key Definitions*]),
+  [Trace semantics], [`Core/Traces.v`], [`Trace`, `Event`, `sender_view`],
+  [Memory model], [`Core/Memory.v`], [`Memory`, `mem_read`, `mem_write`],
+  [Operations], [`Core/Operations.v`], [`Op`, `OpResult`, `exec_cas`, `exec_fadd`],
+  [Safety properties], [`Core/Properties.v`], [`execution_count`, `AtMostOnce`, `op_executed`],
+  [Indistinguishability], [`Theorem1/Indistinguishability.v`], [`indistinguishable`, `sender_view_eq`],
+  [Impossibility Thm 1], [`Theorem1/Impossibility.v`], [`impossibility_safe_retransmission`],
+  [FADD violation], [`Theorem2/FADD.v`], [`fadd_double_increment`],
+  [CAS ABA problem], [`Theorem2/CAS.v`], [`cas_double_success`, `cas_retry_not_generally_safe`],
+  [Consensus numbers], [`Theorem3/ConsensusNumber.v`], [`consensus_number`, `cn_lt`, `rdma_read_cn`],
+  [Failover = Consensus], [`Theorem3/FailoverConsensus.v`], [`no_correct_future_decision`, `failover_needs_cn_2`],
+  [Hierarchy barrier], [`Theorem3/Hierarchy.v`], [`transparent_cas_failover_impossible`],
+)
+
+=== Key Coq Theorems
+
+*Theorem 1 (Indistinguishability):*
+```coq
+Theorem impossibility_safe_retransmission :
+  forall overlay : TransparentOverlay,
+    Transparent overlay -> SilentReceiver ->
+    MemoryReuseAllowed -> NoExactlyOnce ->
+    ~ (ProvidesSafety overlay /\ ProvidesLiveness overlay).
+```
+
+*Theorem 2 (FADD Non-Idempotency):*
+```coq
+Theorem fadd_double_increment :
+  result_1 = ResFADDResult 0 ->
+  result_2 = ResFADDResult 1 ->
+  mem_read state_2 target_addr = 2.
+```
+
+*Theorem 3 (Failover = 2-Process Consensus):*
+```coq
+Theorem no_correct_future_decision :
+  ~ exists f : FutureObservation -> FailoverDecision,
+      f scenario1_future = scenario1_correct /\
+      f scenario2_future = scenario2_correct.
+```
+
+This theorem directly encodes: no deterministic function from observations to decisions can be correct for both the "packet lost" and "ACK lost" scenarios, since both produce `FutureSeesTimeout` but require opposite decisions.
