@@ -157,13 +157,28 @@ Qed.
 
 End CASConcurrent.
 
-(** ** The "Retry is Safe" Fallacy *)
+(** ** The "Retry is Safe" Fallacy (ABA Problem) *)
 
 (** Common misconception: "CAS retry is safe because if it succeeded,
     the retry will just fail."
 
     This is ONLY true in the absence of concurrent modifications.
-    With concurrency, the ABA problem (and worse) can occur. *)
+    With concurrency, the ABA problem occurs:
+
+    The ABA Problem:
+    1. Thread S reads value A, prepares CAS(A -> B)
+    2. Thread P changes A -> B -> A (value returns to A)
+    3. Thread S's CAS succeeds (sees A, writes B)
+    4. But the "A" S saw is not the same "A" - the state changed!
+
+    In our context:
+    - S.CAS(0->1) succeeds, value becomes 1
+    - P3.CAS(1->0) succeeds, value returns to 0
+    - S's retry CAS(0->1) SUCCEEDS because it sees 0 again
+    - S's single logical CAS executed TWICE
+
+    The "value check" of CAS is insufficient because it only checks
+    the CURRENT value, not the HISTORY of modifications. *)
 
 Theorem cas_retry_not_generally_safe :
   exists addr,

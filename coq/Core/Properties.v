@@ -39,7 +39,7 @@ Definition Linearizable (h : History) (spec : SequentialSpec) : Prop :=
 
 (** ** At-Most-Once Semantics *)
 
-(** Operation equality *)
+(** Operation equality (decidable) *)
 Definition op_eq (op1 op2 : Op) : bool :=
   match op1, op2 with
   | OpWrite a1 v1, OpWrite a2 v2 => Nat.eqb a1 a2 && Nat.eqb v1 v2
@@ -48,6 +48,23 @@ Definition op_eq (op1 op2 : Op) : bool :=
   | OpCAS a1 e1 n1, OpCAS a2 e2 n2 => Nat.eqb a1 a2 && Nat.eqb e1 e2 && Nat.eqb n1 n2
   | _, _ => false
   end.
+
+(** Proof that op_eq is a correct decision procedure *)
+Lemma op_eq_refl : forall op, op_eq op op = true.
+Proof.
+  intros []; simpl; repeat rewrite Nat.eqb_refl; auto.
+Qed.
+
+Lemma op_eq_eq : forall op1 op2, op_eq op1 op2 = true <-> op1 = op2.
+Proof.
+  intros op1 op2; split; intros H.
+  - destruct op1, op2; simpl in H; try discriminate;
+    repeat match goal with
+    | H : (_ && _)%bool = true |- _ => apply andb_prop in H; destruct H
+    | H : Nat.eqb _ _ = true |- _ => apply Nat.eqb_eq in H; subst
+    end; reflexivity.
+  - subst. apply op_eq_refl.
+Qed.
 
 (** Count how many times an operation was executed *)
 Fixpoint execution_count (t : Trace) (op : Op) : nat :=
