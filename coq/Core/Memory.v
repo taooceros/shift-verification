@@ -1,8 +1,8 @@
 (** * Memory Model for RDMA Verification *)
 
-From Coq Require Import Arith.
-From Coq Require Import List.
-From Coq Require Import FunctionalExtensionality.
+From Stdlib Require Import Arith.
+From Stdlib Require Import List.
+From Stdlib Require Import FunctionalExtensionality.
 Import ListNotations.
 
 (** ** Basic Types *)

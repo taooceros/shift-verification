@@ -3,12 +3,12 @@
 {
   name = "shift-verification";
 
-  # Coq and proof assistant tools
+  # Rocq and proof assistant tools
   packages = with pkgs; [
-    # Coq 8.18 and packages
-    coqPackages_8_18.coq
-    coqPackages_8_18.coqide
-    coqPackages_8_18.stdpp
+    # Rocq 9.0 (the renamed Coq)
+    rocqPackages.rocq-core
+    rocqPackages.stdlib
+    coqPackages.coq-lsp  # Modern LSP-based IDE support
 
     # Build tools
     gnumake
@@ -19,21 +19,21 @@
 
   # Environment variables
   env = {
-    COQPATH = "${pkgs.coqPackages_8_18.stdpp}/lib/coq/8.18/user-contrib";
+    ROCQPATH = "${pkgs.rocqPackages.stdlib}/lib/rocq/9.0/user-contrib";
   };
 
   # Shell hook
   enterShell = ''
     echo "=========================================="
     echo "  RDMA Failover Impossibility Proofs"
-    echo "  Coq Development Environment"
+    echo "  Rocq Development Environment"
     echo "=========================================="
     echo ""
-    echo "Coq version: $(coqc --version | head -1)"
+    echo "Rocq version: $(rocq --version | head -1)"
     echo ""
     echo "Available commands:"
-    echo "  cd coq && make   - Build Coq proofs"
-    echo "  coqide           - Launch CoqIDE"
+    echo "  cd coq && make   - Build Rocq proofs"
+    echo "  rocq-lsp         - Language server for IDE integration"
     echo "  typst compile proofs.typ - Compile Typst document"
     echo ""
   '';
@@ -53,7 +53,7 @@
     '';
 
     check-proof.exec = ''
-      coqc -Q coq ShiftVerification "$1"
+      rocq compile -Q coq ShiftVerification "$1"
     '';
   };
 }

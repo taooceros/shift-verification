@@ -1,8 +1,8 @@
 (** * Theorem 2 Case B: Compare-and-Swap Violations *)
 
-From Coq Require Import Arith.
-From Coq Require Import List.
-From Coq Require Import Lia.
+From Stdlib Require Import Arith.
+From Stdlib Require Import List.
+From Stdlib Require Import Lia.
 From ShiftVerification.Core Require Import Memory.
 From ShiftVerification.Core Require Import Operations.
 From ShiftVerification.Core Require Import Traces.
@@ -75,14 +75,30 @@ Qed.
 
 Lemma state_3_value : mem_read state_3 target_addr = 1.
 Proof.
-  (* After S.CAS(0->1), P3.CAS(1->0), S.CAS(0->1) retry:
-     Final state has value 1 at target_addr *)
-Admitted. (* Tedious unfolding of nested exec_cas calls *)
+  unfold state_3, state_2, state_1, exec_cas, cas_init, init_memory, default_val.
+  unfold mem_read, mem_write.
+  simpl fst.
+  simpl snd.
+  rewrite Nat.eqb_refl.
+  simpl.
+  rewrite Nat.eqb_refl.
+  simpl.
+  rewrite Nat.eqb_refl.
+  reflexivity.
+Qed.
 
 Lemma result_3_success : result_3 = ResCASResult true 0.
 Proof.
-  (* S's retry CAS succeeds because P3 reset the value to 0 *)
-Admitted. (* Tedious unfolding *)
+  unfold result_3, state_2, state_1, exec_cas, cas_init, init_memory, default_val.
+  unfold mem_read, mem_write.
+  simpl fst.
+  simpl snd.
+  rewrite Nat.eqb_refl.
+  simpl.
+  rewrite Nat.eqb_refl.
+  simpl.
+  reflexivity.
+Qed.
 
 (** ** Violation Analysis *)
 
@@ -188,6 +204,16 @@ Theorem cas_retry_not_generally_safe :
     execution_count t (OpCAS addr 0 1) = 2.
 Proof.
   exists 0.
-  unfold concurrent_cas_trace.
-  (* Both executions of cas_op are in the trace *)
-Admitted. (* Straightforward but tedious count *)
+  unfold concurrent_cas_trace, cas_op, execution_count.
+  simpl.
+  (* Count EvExecute events for OpCAS 0 0 1 *)
+  (* The trace has:
+     - EvExecute (OpCAS 0 0 1) result_1
+     - EvExecute (OpCAS 0 1 0) result_p3  (different op, doesn't count)
+     - EvExecute (OpCAS 0 0 1) result_3
+     So count = 2 *)
+  unfold op_eq. simpl.
+  (* OpCAS 0 0 1 vs OpCAS 0 0 1: matches *)
+  (* OpCAS 0 0 1 vs OpCAS 0 1 0: doesn't match (1 <> 0) *)
+  reflexivity.
+Qed.

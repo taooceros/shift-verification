@@ -3,9 +3,9 @@
 (** This module formalizes the key insight: the failover coordination
     problem is equivalent to solving 2-process consensus. *)
 
-From Coq Require Import Arith.
-From Coq Require Import List.
-From Coq Require Import Lia.
+From Stdlib Require Import Arith.
+From Stdlib Require Import List.
+From Stdlib Require Import Lia.
 From ShiftVerification.Core Require Import Memory.
 From ShiftVerification.Core Require Import Operations.
 From ShiftVerification.Core Require Import Traces.
@@ -132,27 +132,44 @@ Definition future_limited_to_reads : Prop :=
   (* Future process can only observe via reads *)
   True. (* Encoded in TransparentFailover constraint *)
 
-Theorem failover_requires_2_consensus :
-  (* Correct failover requires solving 2-process consensus *)
-  forall proto : FailoverConsensusProtocol,
-    (* The protocol must distinguish PastExecuted from PastNotExecuted *)
-    proto.(past_proposes) PastExecuted <> proto.(past_proposes) PastNotExecuted ->
-    (* But Future only sees Timeout in both cases *)
-    (* So Future cannot satisfy Agreement + Validity *)
-    False.
+(** The impossibility: No FailoverConsensusProtocol can exist *)
+Theorem failover_consensus_impossible :
+  forall proto : FailoverConsensusProtocol, False.
 Proof.
-  intros proto Hdiff.
-  (* Past proposes Commit for Executed, Abort for NotExecuted (by Validity) *)
+  intros proto.
+
+  (* By validity: past_proposes gives correct decisions *)
   assert (Hpast_exec : proto.(past_proposes) PastExecuted = Commit).
   { apply proto.(validity). }
   assert (Hpast_not : proto.(past_proposes) PastNotExecuted = Abort).
   { apply proto.(validity). }
-  (* These are indeed different *)
-  rewrite Hpast_exec, Hpast_not in Hdiff.
-  (* But Future must agree with both... *)
-  (* Future sees Timeout in both cases, so future_proposes(Timeout) must equal BOTH *)
-  (* This is impossible: Commit <> Abort *)
-Admitted. (* Requires explicit modeling of Future's decision function *)
+
+  (* By agreement: future must match past for any observation *)
+  (* With pk = PastExecuted, fo = FutureSeesTimeout:
+     future_proposes FutureSeesTimeout = Commit *)
+  assert (Hfut1 : proto.(future_proposes) FutureSeesTimeout = Commit).
+  { apply (proto.(agreement) PastExecuted FutureSeesTimeout Commit). exact Hpast_exec. }
+
+  (* With pk = PastNotExecuted, fo = FutureSeesTimeout:
+     future_proposes FutureSeesTimeout = Abort *)
+  assert (Hfut2 : proto.(future_proposes) FutureSeesTimeout = Abort).
+  { apply (proto.(agreement) PastNotExecuted FutureSeesTimeout Abort). exact Hpast_not. }
+
+  (* But future_proposes is a function, so:
+     Commit = future_proposes FutureSeesTimeout = Abort *)
+  rewrite Hfut1 in Hfut2.
+  discriminate.
+Qed.
+
+(** Corollary with the original statement *)
+Theorem failover_requires_2_consensus :
+  forall proto : FailoverConsensusProtocol,
+    proto.(past_proposes) PastExecuted <> proto.(past_proposes) PastNotExecuted ->
+    False.
+Proof.
+  intros proto _.
+  exact (failover_consensus_impossible proto).
+Qed.
 
 (** ** Explicit Construction of the Dilemma *)
 

@@ -1,8 +1,8 @@
 (** * RDMA Operations *)
 
-From Coq Require Import Arith.
-From Coq Require Import List.
-From Coq Require Import Lia.
+From Stdlib Require Import Arith.
+From Stdlib Require Import List.
+From Stdlib Require Import Lia.
 From ShiftVerification.Core Require Import Memory.
 Import ListNotations.
 

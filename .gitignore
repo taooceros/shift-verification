@@ -7,7 +7,7 @@ devenv.lock
 result
 .direnv/
 
-# Coq build artifacts
+# Rocq/Coq build artifacts
 **/*.glob
 **/*.vo
 **/*.vok
@@ -16,6 +16,7 @@ result
 **/.*aux
 **/CoqMakefile
 **/CoqMakefile.conf
+**/Makefile.conf
 **/.coqdeps.d
 **/*.d
 **/.lia.cache

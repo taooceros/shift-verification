@@ -20,19 +20,19 @@ devenv shell
 
 ## Build Commands
 
-**Build Coq proofs:**
+**Build Rocq proofs:**
 ```bash
 cd coq && make
 ```
 
 **Rebuild from scratch (regenerate Makefile):**
 ```bash
-cd coq && coq_makefile -f _CoqProject -o Makefile && make clean && make
+cd coq && rocq makefile -f _CoqProject -o Makefile && make clean && make
 ```
 
-**Build single Coq file:**
+**Build single Rocq file:**
 ```bash
-coqc -Q coq ShiftVerification coq/Path/To/File.v
+rocq compile -Q coq ShiftVerification coq/Path/To/File.v
 ```
 
 **Compile Typst document:**
@@ -40,14 +40,16 @@ coqc -Q coq ShiftVerification coq/Path/To/File.v
 typst compile proof_specs.typ proof_specs.pdf
 ```
 
-**Open CoqIDE:**
+**Use rocq-lsp for IDE integration:**
 ```bash
-coqide
+rocq-lsp
 ```
 
-## Coq Project Architecture
+## Rocq Project Architecture
 
-All Coq files use the `ShiftVerification` namespace (defined in `coq/_CoqProject`).
+All Rocq files use the `ShiftVerification` namespace (defined in `coq/_CoqProject`).
+
+**Note**: This project uses Rocq 9.0 (the renamed Coq proof assistant). The source files use `From Stdlib` imports instead of the deprecated `From Coq`.
 
 ### Core/ - Foundational definitions
 
@@ -83,6 +85,6 @@ All Coq files use the `ShiftVerification` namespace (defined in `coq/_CoqProject
 
 ## Documentation
 
-- `proof_specs.typ`: Detailed formal specifications with Coq code excerpts
+- `proof_specs.typ`: Detailed formal specifications with Rocq code excerpts
 - `coq_verification_plan.md`: Original development plan
 - `proofs.typ`: Paper-style presentation of theorems (if exists)

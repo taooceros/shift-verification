@@ -1,8 +1,8 @@
 (** * Theorem 1: Indistinguishability of Traces *)
 
-From Coq Require Import Arith.
-From Coq Require Import List.
-From Coq Require Import Lia.
+From Stdlib Require Import Arith.
+From Stdlib Require Import List.
+From Stdlib Require Import Lia.
 From ShiftVerification.Core Require Import Memory.
 From ShiftVerification.Core Require Import Operations.
 From ShiftVerification.Core Require Import Traces.
@@ -10,6 +10,8 @@ From ShiftVerification.Core Require Import Properties.
 Import ListNotations.
 
 (** ** The LL128 Protocol Model *)
+
+Section LL128Protocol.
 
 (** Protocol parameters *)
 Variable A_data : Addr.
@@ -112,11 +114,17 @@ Qed.
 Lemma T2_memory_reused : forall V1 V_new,
   final_memory (T2_ack_loss V1 V_new) A_data = V_new.
 Proof.
-  intros. unfold final_memory, T2_ack_loss.
-  simpl. unfold exec_write, W_D, W_F.
-  (* After AppReuse, memory at A_data is V_new *)
-  (* The final write in the trace is EvAppReuse which sets A_data to V_new *)
-Admitted. (* Proof requires unfolding memory_after_events step by step *)
+  intros V1 V_new. unfold final_memory, T2_ack_loss.
+  (* Step through memory_after_events manually *)
+  simpl memory_after_events.
+  unfold exec_op, exec_write, W_D, W_F.
+  (* After all the events, the final memory at A_data is V_new
+     because the last write to A_data is from EvAppReuse *)
+  unfold mem_read, mem_write.
+  (* Goal should be: (if A_data =? A_data then V_new else ...) = V_new *)
+  rewrite Nat.eqb_refl.
+  reflexivity.
+Qed.
 
 (** ** Retransmission Analysis *)
 
@@ -128,14 +136,32 @@ Definition T2_with_retransmit (V1 V_new : Val) : Trace :=
     EvExecute (W_D V1) ResWriteAck    (* Ghost write! Overwrites V_new *)
   ].
 
+Lemma memory_after_events_app : forall t1 t2 m,
+  memory_after_events m (t1 ++ t2) = memory_after_events (memory_after_events m t1) t2.
+Proof.
+  intros t1. induction t1 as [| e t1' IH]; intros t2 m.
+  - simpl. reflexivity.
+  - simpl. destruct e; try apply IH.
+    (* EvExecute case: need to destruct exec_op *)
+    destruct (exec_op m o) as [m' r]. apply IH.
+Qed.
+
 Lemma retransmit_causes_ghost_write : forall V1 V_new,
   V1 <> V_new ->
   final_memory (T2_with_retransmit V1 V_new) A_data = V1.
 Proof.
   intros V1 V_new Hdiff.
   unfold final_memory, T2_with_retransmit.
-  (* The final execute writes V1 to A_data *)
-Admitted. (* Proof requires unfolding memory_after_events on concatenated list *)
+  rewrite memory_after_events_app.
+  (* After T2_ack_loss, we have some memory state m *)
+  (* Then we process [EvSend; EvReceive; EvExecute (W_D V1)] *)
+  simpl memory_after_events.
+  unfold exec_op, exec_write, W_D.
+  (* The final EvExecute writes V1 to A_data *)
+  unfold mem_read, mem_write.
+  rewrite Nat.eqb_refl.
+  reflexivity.
+Qed.
 
 (** The ghost write corrupts the receiver's state *)
 Theorem ghost_write_violation : forall V1 V_new,
@@ -151,3 +177,5 @@ Proof.
   intros V1 V_new Hdiff H1 H2.
   rewrite H1, H2. exact Hdiff.
 Qed.
+
+End LL128Protocol.

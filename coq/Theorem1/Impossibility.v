@@ -1,9 +1,9 @@
 (** * Theorem 1: Impossibility of Safe Retransmission *)
 
-From Coq Require Import Arith.
-From Coq Require Import List.
-From Coq Require Import Lia.
-From Coq Require Import Classical.
+From Stdlib Require Import Arith.
+From Stdlib Require Import List.
+From Stdlib Require Import Lia.
+From Stdlib Require Import Classical.
 From ShiftVerification.Core Require Import Memory.
 From ShiftVerification.Core Require Import Operations.
 From ShiftVerification.Core Require Import Traces.
@@ -109,6 +109,75 @@ Definition execution_indistinguishable : Prop :=
 
 (** ** Main Theorem *)
 
+(** Helper: construct traces with identical sender_view but different execution status *)
+Section ConcreteTraces.
+  Variable V1 V_new : Val.
+  Let op := OpWrite A_data V1.
+
+  (** T1: Packet lost - operation NOT executed *)
+  Definition T1_concrete : Trace :=
+    [ EvSend op;
+      EvPacketLost op;
+      EvTimeout op ].
+
+  (** T2: ACK lost - operation WAS executed, memory reused *)
+  Definition T2_concrete : Trace :=
+    [ EvSend op;
+      EvReceive op;
+      EvExecute op ResWriteAck;
+      EvAppReuse A_data V_new;
+      EvAckLost op;
+      EvTimeout op ].
+
+  (** Key: both traces have identical sender_view *)
+  Lemma sender_views_equal :
+    sender_view T1_concrete = sender_view T2_concrete.
+  Proof.
+    unfold T1_concrete, T2_concrete. simpl. reflexivity.
+  Qed.
+
+  (** T1 does not execute the operation *)
+  Lemma T1_not_executed : ~ op_executed T1_concrete op.
+  Proof.
+    unfold op_executed, T1_concrete.
+    intros [res Hin]. simpl in Hin.
+    destruct Hin as [H | [H | [H | H]]].
+    - discriminate.
+    - discriminate.
+    - discriminate.
+    - destruct H.
+  Qed.
+
+  (** T2 does execute the operation *)
+  Lemma T2_executed : op_executed T2_concrete op.
+  Proof.
+    unfold op_executed, T2_concrete.
+    exists ResWriteAck. simpl.
+    right. right. left. reflexivity.
+  Qed.
+
+  (** T1 has timeout *)
+  Lemma T1_has_timeout : sender_saw_timeout T1_concrete op.
+  Proof.
+    unfold sender_saw_timeout, T1_concrete. simpl.
+    right. right. left. reflexivity.
+  Qed.
+
+  (** T1 has the send event *)
+  Lemma T1_has_send : In (EvSend op) T1_concrete.
+  Proof.
+    unfold T1_concrete. simpl. left. reflexivity.
+  Qed.
+
+  (** T2 has memory reuse *)
+  Lemma T2_has_reuse : In (EvAppReuse A_data V_new) T2_concrete.
+  Proof.
+    unfold T2_concrete. simpl.
+    right. right. right. left. reflexivity.
+  Qed.
+
+End ConcreteTraces.
+
 Theorem impossibility_safe_retransmission :
   forall overlay : TransparentOverlay,
     Transparent overlay ->
@@ -119,34 +188,54 @@ Theorem impossibility_safe_retransmission :
 Proof.
   intros overlay Htrans Hsilent Hreuse Hno_eo [Hsafe Hlive].
 
-  (** The proof proceeds by constructing two indistinguishable traces:
+  (* Choose concrete values *)
+  pose (V1 := 1).
+  pose (V_new := 2).
 
-      Trace T1 (packet loss):
-      - Sender sends W_D
-      - Packet is lost
-      - Sender times out
-      - Liveness requires: retransmit = true
+  (* The operation in question - same as used in the section *)
+  pose (the_op := OpWrite A_data V1).
 
-      Trace T2 (ACK loss + memory reuse):
-      - Sender sends W_D
-      - Receiver executes W_D
-      - Application consumes data and reuses memory
-      - ACK is lost
-      - Sender times out
-      - Safety requires: retransmit = false
+  (* The traces *)
+  pose (t1 := T1_concrete V1).
+  pose (t2 := T2_concrete V1 V_new).
 
-      The projection sender_view is non-injective:
-        sender_view(T1) and sender_view(T2) both contain timeout for W_D
+  (* From Liveness applied to t1:
+     t1 has send, no execution, timeout → must retransmit *)
+  assert (Hlive_T1 : overlay.(decide_retransmit) (sender_view t1) the_op = true).
+  {
+    unfold t1, the_op.
+    apply (Hlive (T1_concrete V1) (OpWrite A_data V1)).
+    - apply T1_has_send.
+    - apply T1_not_executed.
+    - apply T1_has_timeout.
+  }
 
-      But the required decisions are contradictory:
-        T1 needs retransmit = true  (for liveness)
-        T2 needs retransmit = false (for safety)
+  (* From Safety applied to t2:
+     t2 has memory reuse and execution → must NOT retransmit *)
+  assert (Hsafe_T2 : overlay.(decide_retransmit) (sender_view t2) the_op = false).
+  {
+    unfold t2, the_op.
+    apply (Hsafe (T2_concrete V1 V_new) (OpWrite A_data V1) V_new).
+    - apply T2_has_reuse.
+    - apply T2_executed.
+  }
 
-      Since the overlay's decision depends only on sender_view (transparency),
-      it cannot make the correct choice for both traces.
-  *)
+  (* But sender_views are equal, so decisions must be equal *)
+  assert (Hviews_eq : sender_view t1 = sender_view t2).
+  { unfold t1, t2. apply sender_views_equal. }
 
-Admitted. (* Full proof requires showing sender_view equivalence *)
+  (* By Transparent, equal sender_views → equal decisions *)
+  assert (Hdec_eq : overlay.(decide_retransmit) (sender_view t1) the_op =
+                    overlay.(decide_retransmit) (sender_view t2) the_op).
+  {
+    apply Htrans. exact Hviews_eq.
+  }
+
+  (* Contradiction: true = false *)
+  rewrite Hlive_T1 in Hdec_eq.
+  rewrite Hsafe_T2 in Hdec_eq.
+  discriminate.
+Qed.
 
 (** ** Corollary: No Correct Transparent Overlay Exists *)
 
@@ -174,14 +263,34 @@ Qed.
     Both scenarios produce the same observable outcome: timeout.
     No finite protocol can resolve this ambiguity. *)
 
-Theorem two_generals_formalized :
-  execution_indistinguishable ->
+(** The core theorem directly uses the trace construction *)
+Theorem two_generals_core :
   forall overlay : TransparentOverlay,
     Transparent overlay ->
-    ~ (ProvidesSafety overlay /\ ProvidesLiveness overlay).
+    forall t1 t2 op,
+      sender_view t1 = sender_view t2 ->
+      In (EvSend op) t1 ->
+      ~ op_executed t1 op ->
+      sender_saw_timeout t1 op ->
+      op_executed t2 op ->
+      (exists V_new, In (EvAppReuse A_data V_new) t2) ->
+      ~ (ProvidesSafety overlay /\ ProvidesLiveness overlay).
 Proof.
-  intros [t1 [t2 [op [Hnot_exec [Hexec [Htimeout1 Htimeout2]]]]]]
-         overlay Htrans [Hsafe Hlive].
-  (* The overlay must make a single decision based on timeout observation.
-     But t1 requires true and t2 requires false. Contradiction. *)
-Admitted.
+  intros overlay Htrans t1 t2 op Hview_eq Hsend1 Hnot_exec1 Htimeout1 Hexec2 [V_new Hreuse2] [Hsafe Hlive].
+
+  (* Liveness on t1: must retransmit *)
+  assert (H1 : overlay.(decide_retransmit) (sender_view t1) op = true).
+  { apply (Hlive t1 op); assumption. }
+
+  (* Safety on t2: must not retransmit *)
+  assert (H2 : overlay.(decide_retransmit) (sender_view t2) op = false).
+  { apply (Hsafe t2 op V_new); assumption. }
+
+  (* Transparency: equal views → equal decisions *)
+  assert (Heq : overlay.(decide_retransmit) (sender_view t1) op =
+                overlay.(decide_retransmit) (sender_view t2) op).
+  { apply Htrans. exact Hview_eq. }
+
+  (* Contradiction *)
+  rewrite H1, H2 in Heq. discriminate.
+Qed.

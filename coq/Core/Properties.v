@@ -1,7 +1,7 @@
 (** * Safety and Liveness Properties *)
 
-From Coq Require Import Arith.
-From Coq Require Import List.
+From Stdlib Require Import Arith.
+From Stdlib Require Import List.
 From ShiftVerification.Core Require Import Memory.
 From ShiftVerification.Core Require Import Operations.
 From ShiftVerification.Core Require Import Traces.
