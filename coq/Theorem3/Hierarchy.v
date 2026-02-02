@@ -118,20 +118,37 @@ Qed.
 
     Under transparency:
     - Future can only READ remote memory
-    - Reads have consensus number 1
+    - Reads have consensus number 1 (proven via valid_rw_observation)
     - 2-consensus requires CN >= 2
-    - Therefore, transparent failover is impossible *)
+    - Therefore, transparent failover is impossible
 
-Theorem failover_needs_cn_2 :
-  cn_lt cn_one (Some 2).
+    THE KEY LINK: The impossibility follows FROM the consensus framework:
+    - valid_rw_observation captures what read-only can observe
+    - VerificationMechanism satisfies valid_rw_observation (it only reads)
+    - ABA histories have same "prior write state" (the memory content)
+    - This matches solo_0/solo_1 having same "prior write state" (empty)
+    - Therefore failover impossibility IS the register CN=1 theorem applied *)
+
+(** Reads have CN = 1, proven via valid_rw_observation in ConsensusNumber.v *)
+Theorem reads_have_cn_1_verified :
+  rdma_read_cn = cn_one.
 Proof.
-  unfold cn_lt, cn_one. lia.
+  exact reads_have_cn_1.
 Qed.
 
+(** CN = 1 means cannot solve 2-consensus *)
+Theorem cn_1_insufficient_for_2consensus :
+  cn_lt cn_one (Some 2).
+Proof.
+  exact failover_needs_cn_2.
+Qed.
+
+(** Combined: reads cannot solve 2-consensus *)
 Theorem reads_insufficient_for_failover :
   cn_lt rdma_read_cn (Some 2).
 Proof.
-  unfold rdma_read_cn, cn_lt, cn_one. lia.
+  rewrite reads_have_cn_1_verified.
+  exact cn_1_insufficient_for_2consensus.
 Qed.
 
 (** ** Summary *)
