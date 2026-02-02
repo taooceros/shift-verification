@@ -9,6 +9,7 @@ From ShiftVerification.Core Require Import Operations.
 From ShiftVerification.Core Require Import Traces.
 From ShiftVerification.Core Require Import Properties.
 From ShiftVerification.Theorem3 Require Import ConsensusNumber.
+From ShiftVerification.Theorem3 Require Import FailoverConsensus.
 Import ListNotations.
 
 (** ** The Failover Coordination Problem *)
@@ -38,24 +39,6 @@ Record TransparentFailover := {
   decision_from_reads : list (Addr * Val) -> bool;
 }.
 
-(** ** The Coordination Problem as Consensus *)
-
-(** The failover decision is equivalent to solving consensus between:
-    - The "past attempt" (original operation)
-    - The "future attempt" (potential retry)
-
-    Both "processes" must agree on the outcome:
-    - COMMIT: operation was executed, do not retry
-    - ABORT: operation was not executed, retry is safe *)
-
-Inductive FailoverDecision :=
-  | Commit   (* Operation succeeded, don't retry *)
-  | Abort.   (* Operation failed, safe to retry *)
-
-(** This is a 2-process consensus problem *)
-Definition failover_is_2_consensus : Prop :=
-  True.  (* The coordination between past/future is 2-process consensus *)
-
 (** ** The Observation Limit *)
 
 (** Under transparency, the overlay can only use reads to verify state *)
@@ -71,87 +54,47 @@ Proof.
   exact read_limited_consensus.
 Qed.
 
-(** ** The Impossibility Argument *)
+(** ** Reliable CAS Definition *)
 
-(** For RDMA CAS failover to be correct, the overlay must:
-    1. Determine if the CAS was executed
-    2. Make this determination consistently (all components agree)
-    3. Do this wait-free (no blocking)
+(** A transparent failover mechanism provides reliable CAS if it can
+    make correct failover decisions for ALL possible histories.
 
-    This requires solving 2-process consensus.
-    But reads have consensus number 1.
-    Therefore, impossible. *)
+    This means: there exists a verification mechanism (based on reading
+    memory) that solves the failover problem. *)
 
-(** The overlay needs to provide reliable CAS semantics *)
 Definition provides_reliable_cas (tf : TransparentFailover) : Prop :=
-  (* The CAS appears to execute exactly once, atomically *)
-  forall (m : Memory) (addr : Addr) (expected new_val : Val),
-    exists unique_result : bool * Val,
-      True.  (* Simplified: exactly-once semantics *)
+  exists V : VerificationMechanism,
+    solves_failover V.
 
-(** Reliable CAS requires consensus number infinity *)
-Lemma reliable_cas_requires_infinity :
-  forall tf,
-    provides_reliable_cas tf ->
-    (* The mechanism must have consensus number infinity *)
-    cn_le cn_infinity (consensus_number ObjCAS).
-Proof.
-  intros tf _.
-  (* cn_le cn_infinity (consensus_number ObjCAS)
-     = cn_le None None
-     = True by definition *)
-  unfold cn_le, cn_infinity, consensus_number.
-  exact I.
-Qed.
+(** ** The Main Impossibility Theorem *)
 
-(** ** Stronger formulation of reliable CAS for the impossibility proof *)
+(** The core impossibility: transparent failover cannot provide reliable CAS.
 
-(** A decision mechanism for failover *)
-Definition FailoverDecisionMechanism := Memory -> bool.
-(* true = Commit (don't retry), false = Abort (retry) *)
+    This follows directly from failover_unsolvable in FailoverConsensus.v,
+    which proves that NO verification mechanism can solve failover due to
+    the ABA problem - two different histories can have identical final
+    memory states but require different decisions. *)
 
-(** Two histories that are indistinguishable via reads *)
-Definition aba_witness_exists : Prop :=
-  exists (m : Memory),
-    (* History 1: CAS executed, then ABA reset -> memory is m *)
-    (* History 2: CAS not executed -> memory is m *)
-    (* Both histories have the same final memory state *)
-    (* But require different decisions (Commit vs Abort) *)
-    True.
-
-(** The core impossibility: no read-based mechanism can distinguish ABA scenarios *)
 Theorem transparent_cas_failover_impossible :
   forall tf : TransparentFailover,
     verification_via_reads tf ->
     tf.(no_metadata_writes) ->
-    (* For any decision mechanism based on reads *)
-    forall decide : FailoverDecisionMechanism,
-      (* There exist two memory states (from different histories) *)
-      (* that are identical but require different decisions *)
-      exists m : Memory,
-        (* The mechanism gives the same answer for both histories *)
-        (* (because it can only see the memory, which is identical) *)
-        (* But one history needs Commit and the other needs Abort *)
-        (* So at least one decision is wrong *)
-        True.
+    ~ provides_reliable_cas tf.
 Proof.
-  intros tf Hreads Hno_meta decide.
-  (* The ABA construction: init_memory can arise from:
-     1. CAS not executed (packet lost) -> should Abort
-     2. CAS executed then reset by concurrent op -> should Commit
-     Both have final memory = init_memory *)
-  exists init_memory.
-  trivial.
+  intros tf Hreads Hno_meta.
+  unfold provides_reliable_cas.
+  intros [V Hsolves].
+  (* Apply the core impossibility from FailoverConsensus *)
+  exact (failover_unsolvable init_memory V Hsolves).
 Qed.
-
-(** The full impossibility connects to the FailoverIsConsensus proof *)
-(** See FailoverConsensus.v: failover_unsolvable proves no verification
-    mechanism can be correct for all histories. *)
 
 (** ** Corollary: Backup RNIC is Irrelevant *)
 
 (** Even with a backup RNIC that can execute CAS operations,
-    the transparency constraint prevents correct failover. *)
+    the transparency constraint prevents correct failover.
+
+    The backup RNIC CAN execute CAS operations.
+    But it CANNOT decide WHETHER to execute them correctly. *)
 
 Corollary backup_rnic_insufficient :
   forall tf : TransparentFailover,
@@ -160,45 +103,50 @@ Corollary backup_rnic_insufficient :
     (* Under transparency constraints *)
     verification_via_reads tf ->
     tf.(no_metadata_writes) ->
-    (* For any decision mechanism, there exists an ambiguous state *)
-    forall decide : FailoverDecisionMechanism,
-      exists m : Memory, True.
+    (* Still cannot provide reliable failover *)
+    ~ provides_reliable_cas tf.
 Proof.
-  intros tf [backup_cas _] Hreads Hno_meta decide.
-  apply (transparent_cas_failover_impossible tf Hreads Hno_meta decide).
+  intros tf _ Hreads Hno_meta.
+  apply (transparent_cas_failover_impossible tf Hreads Hno_meta).
 Qed.
 
-(** ** The Fundamental Problem *)
+(** ** Connection to Consensus Hierarchy *)
 
-(** The backup RNIC CAN execute CAS operations.
-    But it CANNOT decide WHETHER to execute them correctly.
+(** The failover problem requires solving 2-process consensus:
+    - Process P0 (Past): knows the true history
+    - Process P1 (Future): must decide based on observable state
 
-    The decision requires knowing if the original CAS:
-    - Was received by the primary
-    - Was executed by the primary
-    - Had its result reflected in application state
+    Under transparency:
+    - Future can only READ remote memory
+    - Reads have consensus number 1
+    - 2-consensus requires CN >= 2
+    - Therefore, transparent failover is impossible *)
 
-    Determining this via reads alone is insufficient because:
-    - The application may have modified the state
-    - Another CAS may have changed the value
-    - The ABA problem masks the history *)
-
-Definition decision_ambiguity : Prop :=
-  exists m1 m2 : Memory,
-    (* Two different histories *)
-    True /\
-    (* But same observable state via reads *)
-    (forall a, mem_read m1 a = mem_read m2 a) /\
-    (* Requiring different failover decisions *)
-    True.
-
-Theorem ambiguity_prevents_correct_decision :
-  decision_ambiguity ->
-  forall tf : TransparentFailover,
-    verification_via_reads tf ->
-    (* Cannot always make correct decision *)
-    exists m : Memory, True.  (* Some memory state leads to wrong decision *)
+Theorem failover_needs_cn_2 :
+  cn_lt cn_one (Some 2).
 Proof.
-  intros [m1 [m2 [_ [Hsame _]]]] tf Hreads.
-  exists m1. trivial.
+  unfold cn_lt, cn_one. lia.
 Qed.
+
+Theorem reads_insufficient_for_failover :
+  cn_lt rdma_read_cn (Some 2).
+Proof.
+  unfold rdma_read_cn, cn_lt, cn_one. lia.
+Qed.
+
+(** ** Summary *)
+
+(** The transparent CAS failover impossibility arises from:
+
+    1. INFORMATION ASYMMETRY: The sender cannot observe whether the
+       original CAS was executed (packet loss vs ACK loss).
+
+    2. ABA PROBLEM: Memory state alone cannot distinguish histories.
+       - History H0: CAS not executed → memory = m
+       - History H1: CAS executed, then ABA reset → memory = m
+       Both have identical observable state but require different decisions.
+
+    3. CONSENSUS BARRIER: Correct failover requires 2-process consensus.
+       Reads have CN=1, which is insufficient.
+
+    Conclusion: No transparent mechanism can provide reliable CAS failover. *)

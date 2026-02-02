@@ -606,6 +606,10 @@
 
   Definition verification_via_reads (tf : TransparentFailover) : Prop :=
     forall m addr, tf.(can_read_remote) addr m = mem_read m addr.
+
+  (** Reliable CAS = there exists a verification mechanism that solves failover *)
+  Definition provides_reliable_cas (tf : TransparentFailover) : Prop :=
+    exists V : VerificationMechanism, solves_failover V.
   ```
 ]
 
