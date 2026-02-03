@@ -1,13 +1,12 @@
 // RDMA Failover Impossibility Proofs
 // Typst Document
 
-#set document(title: "Impossibility Results for Transparent RDMA Failover")
+#set document(title: [Limits of Transparent RDMA NIC Failover])
 #set page(margin: 2.5cm)
 #set text(font: "New Computer Modern", size: 11pt)
 #set heading(numbering: "1.1")
 #set math.equation(numbering: "(1)")
 
-// Theorem environment
 #let theorem(title: none, body) = {
   block(
     fill: rgb("#f0f0f0"),
@@ -39,321 +38,427 @@
   )
 }
 
-= Impossibility Results for Transparent RDMA Failover
+= Transparent RDMA NIC Failover: What Can and Cannot Be Supported
 
-== Preliminary Definitions
+== The Scenario
 
-#definition("Silent Receiver")[
-  A receiver $R$ that does not send application-level acknowledgments; the sender $S$ relies solely on transport-level signals (e.g., WQE completion status). Formally: no `AppAckEvent` appears in any valid trace.
-]
+Consider a high-availability RDMA system with a primary NIC and a backup NIC. When the primary NIC fails mid-operation, we want the backup NIC to transparently take over---completing any in-flight operations without the application noticing the failure.
 
-#definition("Memory Reuse")[
-  After consuming data at address $A$, the application at $R$ may immediately reuse $A$ for new data without coordination with $S$.
-]
-
-#definition("Transparent Overlay")[
-  A failover mechanism that operates without modifying application semantics or allocating additional persistent state in remote memory. Decisions are based solely on `sender_view(T)`.
-]
-
-#definition("Exactly-Once Delivery")[
-  A transport guarantee ensuring each message is delivered exactly once, despite failures.
-]
-
-#definition("Sender View")[
-  The projection function $pi_S : "Trace" -> "SenderObs"$ that extracts only what the sender can observe: send confirmations, completions, and timeouts. This is the "crown jewel" abstraction---the sender's decision must be a function of this projection alone.
-]
-
-#definition("Execution Count")[
-  For operation $"op"$ in trace $T$: $"exec_count"(T, "op") = |{e in T : e = "EvExecute"("op", r)}|$. Safety requires $"exec_count" <= 1$.
-]
-
-== Theorem 1: Impossibility of Safe Retransmission for Pure-Write Protocols
-
-=== Formal Specification
-
-#block(
-  stroke: 1pt + rgb("#666"),
-  inset: 10pt,
-  radius: 4pt,
-  [
-    *Assumptions:*
-    - `SilentReceiver`: $forall T, e. space e in T => not "AppAckEvent"(e)$
-    - `MemoryReuseAllowed`: $forall V_1, V_"new". space exists T. space "EvAppConsume" in T and "EvAppReuse" in T$
-    - `Transparent(overlay)`: $pi_S (T_1) = pi_S (T_2) => "decide"(T_1) = "decide"(T_2)$
-
-    *Properties:*
-    - `ProvidesSafety`: $"exec_count"(T, "op") <= 1$ (at-most-once)
-    - `ProvidesLiveness`: $not "executed"(T, "op") and "timeout"(T, "op") => "retransmit" = "true"$
-
-    *Theorem:* $not ("ProvidesSafety" and "ProvidesLiveness")$
-  ]
+#figure(
+  ```
+  ┌────────┐         ┌─────────────┐         ┌────────┐
+  │ Sender │───op───▶│ Primary NIC │────?────│ Memory │
+  └────────┘         └─────────────┘         └────────┘
+       │                   ✗ FAILS                │
+       │             ┌─────────────┐              │
+       └────op?─────▶│ Backup NIC  │──────?───────┘
+                     └─────────────┘
+  ```,
+  caption: [NIC failover scenario: should the backup retry the operation?]
 )
 
-#theorem(title: "Impossibility of Safe Retransmission")[
-  In a system with a Silent Receiver and Memory Reuse, no transparent Sender overlay can guarantee Safety (Linearizability) during failover if the transport does not provide Exactly-Once Delivery semantics.
-]
+The sender detects that the primary NIC has failed. The critical question: *Should the backup NIC re-execute the operation?*
 
-#proof[
-  We prove by constructing two execution traces, $cal(T)_1$ and $cal(T)_2$, that are indistinguishable to the Sender $S$ but require mutually exclusive actions to maintain safety.
+- If the primary executed before failing → backup must NOT retry (double-execution)
+- If the primary failed before executing → backup MUST retry (for liveness)
 
-  *The Protocol (LL128 Abstracted):*
+A *transparent failover* mechanism makes this decision without modifying the application protocol---using only the sender's observations and what the backup can read from memory.
 
-  The application requires strict ordering:
-  1. $S$ sends Data: $W_D = "Write"(A_"data", V_1)$
-  2. $S$ sends Flag: $W_F = "Write"(A_"flag", 1)$
-  3. $R$ (App) polls $A_"flag"$. Upon seeing $1$, it consumes $V_1$ at $A_"data"$
-  4. $R$ (App) resets $A_"flag" <- 0$ and may reuse $A_"data"$ for a new value $V_"new"$
+== The Question: Which Operations Can Be Supported?
 
-  *Trace $cal(T)_1$ (Packet Loss --- Retransmission Required):*
-  1. $S$ posts $W_D$
-  2. Network Failure: $W_D$ is lost before reaching $R$
-  3. $S$ detects timeout/error
-  4. State at $R$: $A_"data"$ is untouched
-  5. *Required Action:* $S$ MUST retransmit $W_D$ to ensure liveness
-
-  *Trace $cal(T)_2$ (ACK Loss --- Retransmission Fatal):*
-  1. $S$ posts $W_D$. $R$ receives $W_D$. $A_"data" <- V_1$
-  2. $S$ posts $W_F$. $R$ receives $W_F$. $A_"flag" <- 1$
-  3. Application Execution: $R$ (App) sees $1$, consumes $V_1$
-  4. Memory Reuse: $R$ (App) modifies $A_"data"$ (e.g., $A_"data" <- V_"new"$)
-  5. Network Failure: The ACK for $W_D$ (or $W_F$) is lost
-  6. $S$ detects timeout/error
-  7. *Observation at $S$:* $S$ sees "Uncompleted WQE" --- identical to $cal(T)_1$
-
-  *The Dilemma:*
-  - If $S$ retransmits $W_D$ (as required in $cal(T)_1$):
-    - In $cal(T)_2$: $R$ receives stale data $V_1$ at $A_"data"$
-    - $R$ currently holds $V_"new"$ at $A_"data"$
-    - Result: *Data Corruption (Ghost Write)* --- violates safety
-
-  - If $S$ does not retransmit:
-    - In $cal(T)_1$: $R$ never receives the data
-    - Result: *Deadlock* --- violates liveness
-
-  Since $S$ cannot distinguish $cal(T)_1$ from $cal(T)_2$ using only transport-level signals, no correct action exists.
-]
-
-== Theorem 2: Violation of Linearizability for Retried Atomics
-
-=== Formal Specification
-
-#block(
-  stroke: 1pt + rgb("#666"),
-  inset: 10pt,
-  radius: 4pt,
-  [
-    *Case A: FADD Non-Idempotency*
-    ```
-    exec_fadd(m, addr, delta) = (m', old_val)
-      where m'[addr] = m[addr] + delta
-            old_val = m[addr]
-    ```
-    - After double execution: $v = v_0 + 2 dot "delta"$ instead of $v_0 + "delta"$
-    - Violates: `execution_count <= 1`
-
-    *Case B: CAS with ABA Problem*
-    ```
-    Trace: S.CAS(0→1) → P3.CAS(1→0) → S.CAS(0→1)  [retry]
-    ```
-    - Both S.CAS operations succeed (return `true, 0`)
-    - P3's successful modification is silently overwritten
-    - `execution_count(S.CAS) = 2` violates atomicity
-
-    *Key Insight:* "Retry is safe because duplicate CAS fails" is FALSE with concurrency.
-  ]
-)
-
-#theorem(title: "Non-Linearizability of Retried Atomics")[
-  In a system with concurrent access and no receiver-side deduplication, a transparent overlay cannot guarantee Linearizability for RDMA Atomics under network failure.
-]
-
-#proof[
-  We assume there exists a correct transparent failover mechanism $cal(M)$ that retransmits atomics upon timeout. We derive a contradiction.
-
-  *Case A: Fetch-and-Add (State Corruption)*
-
-  Let $"Op" = "FADD"("Add" = 1)$ with initial state $v = 0$.
-
-  1. $S$ sends $"Op"$
-  2. $R$ receives $"Op"$, updates $v <- v + 1$. New state: $v = 1$
-  3. Failure: The ACK from $R$ to $S$ is lost
-  4. $S$ observes a timeout
-  5. Following $cal(M)$, $S$ retransmits $"Op"$
-  6. $R$ executes $"Op"$ again: $v <- v + 1$. New state: $v = 2$
-
-  *Violation:* The operation $"Op"$ was issued once but executed twice. The final state $v = 2$ is invalid for a single FADD. This violates at-most-once semantics.
-
-  *Case B: Compare-and-Swap (Return Value Inconsistency)*
-
-  Let $"Op" = "CAS"("Expect" = 0, "Swap" = 1)$ with initial state $v = 0$.
-
-  1. $S$ sends $"Op"$
-  2. $R$ checks $v = 0$, sets $v <- 1$. Returns $"Success"$ ($"OldVal" = 0$)
-  3. Failure: The Success ACK is lost
-  4. Concurrent modification: A third party $P_3$ executes $"CAS"("Expect" = 1, "Swap" = 0)$, resetting $v <- 0$
-  5. $S$ retransmits $"Op"$
-  6. $R$ checks $v = 0$, sets $v <- 1$. Returns $"Success"$ ($"OldVal" = 0$)
-
-  *Violation:* $S$ believes its single CAS succeeded once. The actual history is:
-  $ S."CAS" -> P_3."CAS" -> S."CAS" $
-
-  The linearization point of $S$'s operation is ambiguous. More critically, $S$ has overwritten $P_3$'s modification without awareness, violating the Atomicity of the concurrent schedule.
-]
-
-== Theorem 3: Consensus Hierarchy Impossibility
-
-=== Formal Specification: Failover as 2-Process Consensus
-
-The key insight is that failover coordination IS the 2-process consensus problem.
-
-#block(
-  stroke: 1pt + rgb("#666"),
-  inset: 10pt,
-  radius: 4pt,
-  [
-    *The Two "Processes":*
-    ```
-    Process := Past | Future
-    ```
-    - *Past*: Represents what actually happened to the original CAS
-    - *Future*: Represents the retry decision that must be made
-
-    *The Decision Space:*
-    ```
-    FailoverDecision := Commit | Abort
-      Commit: Original CAS executed; do NOT retry
-      Abort:  Original CAS not executed; retry is SAFE
-    ```
-
-    *Knowledge Asymmetry:*
-    ```
-    PastKnowledge := PastExecuted | PastNotExecuted
-    FutureObservation := FutureSeesTimeout | FutureSeesCompletion
-    ```
-
-    *The Dilemma (Two Indistinguishable Scenarios):*
-    #table(
-      columns: (auto, auto, auto, auto),
-      inset: 6pt,
-      align: horizon,
-      table.header([*Scenario*], [*Past*], [*Future Sees*], [*Correct Decision*]),
-      [1. Packet lost], [`NotExecuted`], [`Timeout`], [`Abort` (retry)],
-      [2. ACK lost], [`Executed`], [`Timeout`], [`Commit` (no retry)],
-    )
-
-    *Core Theorem:* No function $f : "FutureObservation" -> "Decision"$ is correct:
-    ```
-    ¬∃f. f(Timeout) = Abort ∧ f(Timeout) = Commit
-    ```
-    Since `Abort ≠ Commit`, no such $f$ exists.
-  ]
-)
-
-=== Consensus Number Analysis
-
-#block(
-  stroke: 1pt + rgb("#666"),
-  inset: 10pt,
-  radius: 4pt,
-  [
-    *Herlihy's Consensus Hierarchy:*
-    ```
-    cn(Read/Write Register) = 1
-    cn(Test-and-Set) = 2
-    cn(FADD) = 2
-    cn(CAS) = ∞
-    ```
-
-    *The Barrier:*
-    - Failover coordination requires 2-process consensus: $"CN" >= 2$
-    - Transparent overlay can only use reads: $"CN" = 1$
-    - $1 < 2$ ⟹ *Impossible*
-
-    *Why Backup RNIC Doesn't Help:*
-    ```
-    Backup CAN execute:  CAS(addr, expected, new)
-    Backup CANNOT solve: "Should I execute this CAS?"
-    ```
-    The decision problem has CN ≥ 2, but verification uses only reads (CN = 1).
-  ]
-)
-
-#theorem(title: "Consensus Hierarchy Barrier")[
-  Transparent Failover for RDMA Atomics is impossible because it requires solving Consensus using only Registers.
-]
-
-#proof[
-  *Premise:* The application relies on RDMA Atomics (e.g., CAS) to solve consensus problems (leader election, lock acquisition). Thus, the RDMA operation provided by the overlay must maintain Consensus Number $infinity$.
-
-  *Failover Coordination:* When a network fault occurs, the Client and the Backup RNIC must agree on the state of the previous operation ("Committed" or "Aborted") to preserve linearizability. This is equivalent to solving the Consensus Problem between the "Past Attempt" and the "Future Attempt."
-
-  *Available Primitives:* Under the transparency constraint, the overlay cannot allocate new persistent state (epoch counters, transaction logs) in remote memory. It can only inspect existing application data via the Backup RNIC.
-
-  *The Observation Limit:* Inspecting application data to infer completion is equivalent to a Read operation. In Herlihy's Hierarchy:
-  - Read/Write Registers have Consensus Number $= 1$
-  - CAS has Consensus Number $= infinity$
-
-  *Contradiction:* By Herlihy's universality result, it is impossible to implement a primitive with Consensus Number $infinity$ (Reliable CAS) using only primitives with Consensus Number $1$ (Reads for verification) in a wait-free manner.
-
-  *Conclusion:* The existence of a Backup RNIC is irrelevant because, while it can execute CAS, it lacks the shared coordination state required to decide _whether_ to execute it. Thus, transparent failover for Atomics is impossible.
-]
-
-== Summary
+Not all RDMA operations are equal. We analyze which can be transparently failed over:
 
 #table(
   columns: (auto, auto, auto),
   inset: 8pt,
   align: horizon,
-  table.header(
-    [*Theorem*], [*Core Argument*], [*Impossibility Type*],
-  ),
-  [1. Pure-Write], [Indistinguishable traces], [Safety vs. Liveness dilemma],
-  [2. Atomics], [Non-idempotency], [Linearizability violation],
-  [3. Consensus], [Herlihy hierarchy], [Consensus number barrier],
+  table.header([*Operation*], [*Idempotent?*], [*Transparent Failover?*]),
+  [Send/Recv (two-sided)], [Yes], [#text(fill: rgb("#080"))[Possible]],
+  [Write#footnote[Write is idempotent in isolation, but if used for memory ordering (e.g., signaling "data ready"), correctness depends on execution knowledge---which requires solving 2-consensus.]], [Yes], [#text(fill: rgb("#080"))[Possible]],
+  [Read], [Yes], [#text(fill: rgb("#080"))[Possible]],
+  [FADD], [No], [#text(fill: rgb("#c00"))[Impossible]],
+  [CAS], [Conditional], [#text(fill: rgb("#c00"))[Impossible in general]],
 )
 
-== Coq Formalization Correspondence
+*The fundamental issue*: Determining whether an operation was executed is a 2-consensus problem (shown in Theorem 3). Any operation whose correctness depends on knowing whether it executed cannot be transparently failed over.
 
-The following table maps specification elements to their Coq implementations:
+For atomic operations (FADD, CAS), the problem is compounded: they are non-idempotent, so incorrect retry corrupts state regardless of ordering concerns.
+
+#pagebreak()
+
+== The Core Problem: What Did the Primary Do?
+
+When the primary NIC fails, there are two possible histories:
+
+#block(
+  stroke: 1pt + rgb("#666"),
+  inset: 12pt,
+  radius: 4pt,
+  [
+    *History $H_1$: Primary Failed Before Execution*
+    - Sender issued atomic operation to primary NIC
+    - Primary NIC failed before executing
+    - Operation was never performed
+    - *Correct action*: Backup must execute the operation
+
+    *History $H_2$: Primary Executed Then Failed*
+    - Sender issued atomic operation to primary NIC
+    - Primary NIC executed the operation
+    - Primary NIC failed before sending completion
+    - *Correct action*: Backup must NOT execute (already done)
+  ]
+)
+
+The sender observes the same thing in both cases: *the primary NIC failed and no completion was received.* For idempotent operations, this ambiguity is harmless---retry produces the same result. For atomic operations, it is fatal.
+
+== Definitions
+
+#definition([Sender View])[
+  The projection $pi_S$ extracts only what the sender can observe: operation submissions, completions, and NIC failures. The sender cannot observe whether the primary executed before failing.
+]
+
+#definition([Transparent Failover])[
+  A failover mechanism where the backup's decision depends only on: (1) the sender's observations $pi_S$, and (2) reading the current memory state. No persistent metadata or protocol modifications allowed.
+]
+
+#definition([Safety and Liveness])[
+  - *Safety*: Each operation executes at most once across primary and backup
+  - *Liveness*: If an operation was not executed by the primary, the backup eventually executes it
+]
+
+#pagebreak()
+
+== Theorem 1: Sender Cannot Distinguish Histories
+
+#theorem(title: [Indistinguishability])[
+  For any operation, the sender's observations are identical whether the primary executed before failing or failed before executing.
+]
+
+#proof[
+  Consider any operation sent to the primary NIC.
+
+  *History $H_1$: Failed Before Execution*
+  #block(inset: (left: 1em))[
+    1. Sender submits operation to primary NIC
+    2. Primary NIC fails before processing
+    3. Sender detects NIC failure
+    4. Sender's observation: $["Submit"("op"), "NICFailure"]$
+  ]
+
+  *History $H_2$: Executed Then Failed*
+  #block(inset: (left: 1em))[
+    1. Sender submits operation to primary NIC
+    2. Primary NIC executes operation
+    3. Primary NIC fails before sending completion
+    4. Sender detects NIC failure
+    5. Sender's observation: $["Submit"("op"), "NICFailure"]$
+  ]
+
+  Both produce: $pi_S(H_1) = pi_S(H_2) = ["Submit"("op"), "NICFailure"]$
+
+  Any decision rule based solely on $pi_S$ must make the same choice for both histories.
+]
+
+*For idempotent operations*: This is fine---retry is safe either way.
+
+*For atomic operations*: This is a problem---$H_1$ requires retry, $H_2$ forbids it.
+
+#pagebreak()
+
+== Theorem 2: Atomic Operations Are Non-Idempotent
+
+The indistinguishability from Theorem 1 only matters because atomic operations cannot tolerate incorrect retry.
+
+#theorem(title: [FADD Non-Idempotency])[
+  For $delta > 0$, executing FADD twice produces different state than executing once.
+]
+
+#proof[
+  Let FADD add $delta$ to address $a$, starting from $m[a] = 0$.
+
+  #table(
+    columns: (auto, auto, auto),
+    inset: 8pt,
+    align: horizon,
+    table.header([*Scenario*], [*Final State*], [*Return Value*]),
+    [Execute once (correct)], [$m[a] = delta$], [$0$],
+    [Execute twice (incorrect retry)], [$m[a] = 2delta$], [2nd returns $delta$],
+  )
+
+  The states differ: $delta eq.not 2delta$ for $delta > 0$. FADD is non-idempotent.
+]
+
+*Consequence*: If the backup incorrectly retries FADD after the primary already executed, the application sees $2delta$ instead of $delta$---a silent corruption.
+
+#theorem(title: [CAS Can Succeed Twice])[
+  With concurrent modification, a CAS retry can succeed even if the original succeeded.
+]
+
+#proof[
+  Consider primary executing CAS$(0 arrow.r 1)$, then a concurrent process resetting the value:
+
+  #table(
+    columns: (auto, auto, auto, auto),
+    inset: 6pt,
+    align: horizon,
+    table.header([*Step*], [*Actor*], [*Operation*], [*Memory*]),
+    [1], [Primary NIC], [CAS$(0 arrow.r 1)$ succeeds], [$0 arrow.r 1$],
+    [2], [Primary NIC], [Fails before completion], [---],
+    [3], [Concurrent], [CAS$(1 arrow.r 0)$ succeeds], [$1 arrow.r 0$],
+    [4], [Backup NIC], [CAS$(0 arrow.r 1)$ retry], [$0 arrow.r 1$ succeeds!],
+  )
+
+  The backup's retry succeeds because the value returned to $0$ (ABA problem). The application's single CAS executed twice.
+]
+
+*The Fallacy*: "CAS retry is safe because duplicates fail" assumes no concurrent modification.
+
+#pagebreak()
+
+== Theorem 3: Memory Inspection Cannot Help
+
+Perhaps the backup NIC can read memory to determine if the primary executed? Theorem 3 shows this fails due to the ABA problem.
+
+#theorem(title: [ABA Defeats Verification])[
+  Reading memory cannot distinguish "primary executed then value reset" from "primary never executed."
+]
+
+#proof[
+  Consider CAS$(0 arrow.r 1)$ where the initial value was $0$.
+
+  *History $H_1$: Primary Never Executed*
+  #block(inset: (left: 1em))[
+    - Memory state: $m[a] = 0$ (unchanged)
+    - Correct decision: Backup should execute
+  ]
+
+  *History $H_2$: Primary Executed, Then ABA Reset*
+  #block(inset: (left: 1em))[
+    - Primary executed: $0 arrow.r 1$
+    - Concurrent process reset: $1 arrow.r 0$
+    - Memory state: $m[a] = 0$ (same as $H_1$!)
+    - Correct decision: Backup should NOT execute
+  ]
+
+  The backup reads $m[a] = 0$ in both cases. Any verification function $V : "Memory" -> {"Execute", "Skip"}$ must return the same answer for both, but they require opposite decisions.
+]
+
+#pagebreak()
+
+== Why This Is Fundamentally Impossible: The Consensus Hierarchy
+
+The ABA problem is not a bug we can fix with cleverness. It reflects a *fundamental limit* from distributed computing theory: Herlihy's Consensus Hierarchy.
+
+=== What Is the Consensus Hierarchy?
+
+In 1991, Maurice Herlihy proved that synchronization primitives form a strict hierarchy based on their *consensus number*---the maximum number of processes that can reach agreement using only that primitive.
+
+#definition([Consensus Number])[
+  $"CN"(X) = n$ means primitive $X$ can solve wait-free consensus among $n$ processes, but not among $n+1$ processes. $"CN"(X) = infinity$ means $X$ can solve consensus for any number of processes.
+]
+
+The hierarchy is *strict*: a primitive with $"CN" = k$ *cannot implement* any primitive with $"CN" > k$.
+
+=== The Consensus Hierarchy
+
+#figure(
+  table(
+    columns: (auto, auto, auto),
+    inset: 10pt,
+    align: horizon,
+    stroke: 1pt,
+    table.header([*Primitive*], [*CN*], [*Why*]),
+    [Read/Write], [$1$], [Reads are invisible; writes return no info],
+    [FADD], [$2$], [Sum is commutative: $delta_0 + delta_1 = delta_1 + delta_0$],
+    [CAS], [$infinity$], [First CAS wins; all observe the winner],
+  ),
+  caption: [Herlihy's Consensus Hierarchy]
+)
+
+*Key Insight*: Each consensus number is *derived* from the primitive's semantics, not arbitrarily assigned:
+
+- *Register CN = 1*: Two processes running solo see the same initial state (empty memory). They must decide differently but observe identically.
+
+- *FADD CN = 2*: Addition is commutative. Process 2 sees $delta_0 + delta_1$ whether execution order is $[0,1,2]$ or $[1,0,2]$---same sum, different winners.
+
+- *CAS CN = $infinity$*: The first CAS to a sentinel wins, and everyone reads the winner's value. Different winners $arrow.r$ different observations $arrow.r$ always distinguishable.
+
+=== Failover Is 2-Process Consensus
+
+The failover decision is *structurally equivalent* to 2-process consensus:
+
+#figure(
+  table(
+    columns: (1fr, 1fr),
+    inset: 10pt,
+    align: horizon,
+    stroke: 1pt,
+    table.header([*2-Process Consensus*], [*Failover Decision*]),
+    [Two processes $P_0$, $P_1$], [Two histories $H_1$, $H_2$],
+    [Each proposes a value], [Each requires a decision],
+    [$P_0$ proposes "execute"], [$H_1$ (not executed) requires Execute],
+    [$P_1$ proposes "skip"], [$H_2$ (already executed) requires Skip],
+    [Must agree on one value], [Must make correct choice],
+    [Winner's value wins], [Actual history determines correctness],
+  ),
+  caption: [Structural isomorphism between failover and 2-consensus]
+)
+
+#theorem(title: [Reduction: Failover Solver $arrow.r.double$ 2-Consensus])[
+  If a correct failover solver $F$ exists, we can solve 2-process consensus:
+
+  #block(inset: (left: 2em))[
+    1. $P_0$ and $P_1$ each write their input to `proposed[i]`
+    2. Both call $F(m)$ where $m$ is the (ABA-ambiguous) memory state
+    3. If $F(m) = "Execute"$: decide `proposed[0]`
+    4. If $F(m) = "Skip"$: decide `proposed[1]`
+  ]
+
+  This satisfies consensus: $F$ determines a unique winner, both processes agree.
+]
+
+=== Why Read-Only Verification Fails
+
+The backup NIC can only *read* memory to determine if the primary executed. But:
+
+#block(
+  fill: rgb("#fff0f0"),
+  stroke: 2pt + rgb("#c00"),
+  inset: 12pt,
+  radius: 6pt,
+  width: 100%,
+  [
+    *The Consensus Barrier*
+
+    Failover requires solving 2-process consensus ($"CN" >= 2$).
+
+    Read-only verification has $"CN" = 1$.
+
+    By Herlihy's impossibility theorem: $"CN" = 1$ primitives *cannot* solve 2-consensus.
+
+    Therefore: *transparent failover for atomics is impossible*.
+  ]
+)
+
+This is not a limitation of our specific approach---it is a *mathematical impossibility*. No algorithm using only reads can solve this problem, because the consensus hierarchy is a fundamental law of distributed computing.
+
+#theorem(title: [Main Impossibility Result])[
+  Transparent failover for atomic operations is impossible because:
+  1. Failover requires solving 2-process consensus (distinguishing $H_1$ from $H_2$)
+  2. Transparency limits verification to read-only operations
+  3. $"CN"("Read") = 1 < 2$
+  4. By Herlihy's hierarchy, $"CN" = 1$ primitives cannot solve 2-consensus
+]
+
+#pagebreak()
+
+== Summary: What Can and Cannot Be Supported
+
+#figure(
+  ```
+                    ┌─────────────────────────────────┐
+                    │     Primary NIC Fails           │
+                    └────────────────┬────────────────┘
+                                     │
+              ┌──────────────────────┴──────────────────────┐
+              │                                             │
+     ┌────────▼────────┐                          ┌─────────▼────────┐
+     │ Idempotent Ops  │                          │ Atomic Ops       │
+     │ (Read, Write)   │                          │ (FADD, CAS)      │
+     └────────┬────────┘                          └─────────┬────────┘
+              │                                             │
+              │ Retry is always safe                        │ Retry may corrupt
+              │                                             │
+     ┌────────▼────────┐                          ┌─────────▼────────┐
+     │ ✓ SUPPORTED     │                          │ ✗ NOT SUPPORTED  │
+     └─────────────────┘                          └──────────────────┘
+  ```,
+  caption: [Transparent failover support depends on operation idempotency]
+)
+
+#table(
+  columns: (auto, 1fr),
+  inset: 10pt,
+  align: horizon,
+  table.header([*Theorem*], [*What It Shows*]),
+  [1], [Sender cannot distinguish "primary executed" from "primary failed before executing"],
+  [2], [For atomic operations, incorrect retry corrupts state (non-idempotent)],
+  [3], [Backup cannot determine correct action by reading memory (ABA problem)],
+)
+
+#align(center)[
+  #block(
+    stroke: 2pt + rgb("#c00"),
+    inset: 16pt,
+    radius: 8pt,
+    [
+      *Transparent NIC failover cannot support RDMA atomic operations.*
+
+      FADD and CAS require knowing whether the primary executed---information that is lost when the NIC fails and cannot be recovered by reading memory.
+    ]
+  )
+]
+
+#pagebreak()
+
+== Implications
+
+*Operations That CAN Be Supported:*
+- Two-sided operations (Send/Recv)---receiver participates explicitly
+- RDMA Read (idempotent---reading twice is harmless)
+- RDMA Write, *only if* the receiver does not depend on knowing whether the write executed (e.g., no memory ordering for synchronization)
+- Any operation where correctness does not depend on execution knowledge
+
+*Operations That CANNOT Be Supported Transparently:*
+- Any operation where the receiver depends on memory ordering (requires knowing if operation executed $arrow.r$ 2-consensus)
+- FADD (non-idempotent: retry corrupts state)
+- CAS (ABA problem: retry can succeed twice)
+- Any read-modify-write atomic
+
+*Workarounds (Violate Transparency):*
+- Receiver-side operation logs with deduplication
+- Unique operation IDs tracked by receiver
+- Application-level acknowledgments
+- Two-phase commit protocols
+
+The fundamental impossibility is that determining whether an operation executed requires solving 2-consensus. For truly idempotent operations where correctness does not depend on this knowledge, transparent failover works. For operations with ordering dependencies or non-idempotent semantics, it is impossible.
+
+#pagebreak()
+
+== Rocq Formalization
+
+All theorems are mechanically verified in Rocq 9.0.
 
 #table(
   columns: (auto, auto, auto),
   inset: 6pt,
   align: horizon,
-  table.header([*Concept*], [*Coq Module*], [*Key Definitions*]),
-  [Trace semantics], [`Core/Traces.v`], [`Trace`, `Event`, `sender_view`],
-  [Memory model], [`Core/Memory.v`], [`Memory`, `mem_read`, `mem_write`],
-  [Operations], [`Core/Operations.v`], [`Op`, `OpResult`, `exec_cas`, `exec_fadd`],
-  [Safety properties], [`Core/Properties.v`], [`execution_count`, `AtMostOnce`, `op_executed`],
-  [Indistinguishability], [`Theorem1/Indistinguishability.v`], [`indistinguishable`, `sender_view_eq`],
-  [Impossibility Thm 1], [`Theorem1/Impossibility.v`], [`impossibility_safe_retransmission`],
-  [FADD violation], [`Theorem2/FADD.v`], [`fadd_double_increment`],
-  [CAS ABA problem], [`Theorem2/CAS.v`], [`cas_double_success`, `cas_retry_not_generally_safe`],
-  [Consensus numbers], [`Theorem3/ConsensusNumber.v`], [`consensus_number`, `cn_lt`, `rdma_read_cn`],
-  [Failover = Consensus], [`Theorem3/FailoverConsensus.v`], [`no_correct_future_decision`, `failover_needs_cn_2`],
-  [Hierarchy barrier], [`Theorem3/Hierarchy.v`], [`transparent_cas_failover_impossible`],
+  table.header([*Concept*], [*Module*], [*Key Theorems*]),
+  [Sender view], [`Core/Traces.v`], [`sender_view`, `SenderObs`],
+  [Transparent overlay], [`Core/Properties.v`], [`TransparentOverlay`],
+  [Indistinguishability], [`Theorem1/Impossibility.v`], [`sender_views_equal`, `impossibility_safe_retransmission`],
+  [FADD non-idempotent], [`Theorem2/Atomics.v`], [`fadd_non_idempotent`],
+  [CAS double success], [`Theorem2/CAS.v`], [`cas_double_success`],
+  [ABA problem], [`Theorem3/FailoverConsensus.v`], [`H0_H1_same_memory`],
+  [CN = 1 insufficient], [`Theorem3/ConsensusNumber.v`], [`readwrite_2consensus_impossible_same_protocol`],
+  [Atomic failover impossible], [`Theorem3/Hierarchy.v`], [`transparent_cas_failover_impossible`],
 )
 
-=== Key Coq Theorems
+=== Key Theorems
 
-*Theorem 1 (Indistinguishability):*
+*Theorem 1* --- Sender observations are identical for both histories:
 ```coq
-Theorem impossibility_safe_retransmission :
-  forall overlay : TransparentOverlay,
-    Transparent overlay -> SilentReceiver ->
-    MemoryReuseAllowed -> NoExactlyOnce ->
-    ~ (ProvidesSafety overlay /\ ProvidesLiveness overlay).
+Lemma sender_views_equal :
+  sender_view T1_concrete = sender_view T2_concrete.
 ```
 
-*Theorem 2 (FADD Non-Idempotency):*
+*Theorem 2* --- FADD is non-idempotent:
 ```coq
-Theorem fadd_double_increment :
-  result_1 = ResFADDResult 0 ->
-  result_2 = ResFADDResult 1 ->
-  mem_read state_2 target_addr = 2.
+Theorem fadd_non_idempotent : forall a delta m,
+  delta > 0 -> ~ Idempotent (OpFADD a delta) m.
 ```
 
-*Theorem 3 (Failover = 2-Process Consensus):*
+*Theorem 3* --- No correct decision function exists for atomics:
 ```coq
 Theorem no_correct_future_decision :
   ~ exists f : FutureObservation -> FailoverDecision,
@@ -361,4 +466,11 @@ Theorem no_correct_future_decision :
       f scenario2_future = scenario2_correct.
 ```
 
-This theorem directly encodes: no deterministic function from observations to decisions can be correct for both the "packet lost" and "ACK lost" scenarios, since both produce `FutureSeesTimeout` but require opposite decisions.
+*Main Result* --- Transparent failover cannot support atomic operations:
+```coq
+Theorem transparent_cas_failover_impossible :
+  forall tf : TransparentFailover,
+    verification_via_reads tf ->
+    tf.(no_metadata_writes) ->
+    ~ provides_reliable_cas tf.
+```
