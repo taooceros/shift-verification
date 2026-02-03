@@ -1,0 +1,6 @@
+# Coq Project Configuration for SHIFT Verification
+# This file is used by CoqIDE and other Coq development environments
+
+-Q . SHIFT
+
+RDMAModel.v
