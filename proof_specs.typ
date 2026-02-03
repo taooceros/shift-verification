@@ -546,6 +546,88 @@
   *Violation*: Sender S issued ONE CAS but it was executed TWICE. Moreover, P3's successful modification was silently overwritten. This violates both at-most-once semantics and linearizability.
 ]
 
+== Main Result: No Transparent Overlay for Non-Idempotent Operations
+
+Combining Theorems 1 and 2, we derive the impossibility of transparent overlays for atomic operations.
+
+#spec-box("Non-Idempotent Retry is Unsafe")[
+  ```coq
+  Lemma non_idempotent_retry_unsafe : forall op m,
+    ~ Idempotent op m ->
+    let (m1, r1) := exec_op m op in
+    let (m2, r2) := exec_op m1 op in
+    m1 <> m2 \/ r1 <> r2.
+  (* PROVED: directly from definition of Idempotent via De Morgan *)
+
+  Lemma fadd_retry_unsafe : forall a delta m,
+    delta > 0 ->
+    let op := OpFADD a delta in
+    let (m1, r1) := exec_op m op in
+    let (m2, r2) := exec_op m1 op in
+    m1 <> m2 \/ r1 <> r2.
+  (* PROVED: instantiation using fadd_non_idempotent *)
+  ```
+]
+
+#spec-box("Combined Impossibility Theorem")[
+  ```coq
+  (** The core impossibility: packet loss and ACK loss are indistinguishable *)
+  Definition IndistinguishableExecutionStatus : Prop :=
+    forall op, exists t1 t2,
+      sender_view t1 = sender_view t2 /\     (* Same observations *)
+      sender_saw_timeout t1 op /\
+      sender_saw_timeout t2 op /\
+      ~ op_executed t1 op /\                  (* t1: not executed *)
+      op_executed t2 op.                      (* t2: executed *)
+
+  Theorem no_transparent_overlay_non_idempotent :
+    IndistinguishableExecutionStatus ->
+    forall (overlay : TransparentOverlay) (op : Op) (m : Memory),
+      ~ Idempotent op m ->
+      ~ (LiveRetransmit overlay /\
+         (forall t, op_executed t op ->
+           overlay.(decide_retransmit) (sender_view t) op = false)).
+  ```
+
+  *Proof*:
+  1. From `IndistinguishableExecutionStatus`: $exists t_1, t_2$ with same `sender_view` but different execution status
+  2. Liveness on $t_1$ (packet lost): `retransmit = true`
+  3. Safety on $t_2$ (executed): `retransmit = false`
+  4. But `sender_view t1 = sender_view t2` $arrow.r$ same decision required
+  5. Contradiction: `true = false` $square$
+]
+
+#spec-box("Corollary: Atomic Operations Cannot Have Transparent Overlay")[
+  ```coq
+  Corollary no_transparent_overlay_atomics :
+    IndistinguishableExecutionStatus ->
+    forall (overlay : TransparentOverlay),
+      (* FADD with delta > 0 *)
+      (forall a delta, delta > 0 ->
+        ~ (LiveRetransmit overlay /\ SafeNoRetry overlay (OpFADD a delta))) /\
+      (* CAS where first execution succeeds *)
+      (forall a expected new_val,
+        mem_read init_memory a = expected ->
+        expected <> new_val ->
+        ~ (LiveRetransmit overlay /\ SafeNoRetry overlay (OpCAS a expected new_val))).
+  (* PROVED *)
+  ```
+]
+
+#proof-box[
+  *Key Insight*: The combination of Theorems 1 and 2:
+
+  - *Theorem 1*: Sender cannot distinguish packet loss from ACK loss (same `sender_view`)
+  - *Theorem 2*: Atomic operations are non-idempotent (retry causes state/result divergence)
+
+  *Combined*: For atomic operations, any transparent overlay faces an impossible dilemma:
+  - Liveness requires retry when packet was lost
+  - Safety forbids retry when operation was executed (non-idempotent $arrow.r$ corruption)
+  - But both scenarios produce identical sender observations
+
+  Therefore, *no transparent overlay can support atomic operations*.
+]
+
 #pagebreak()
 
 = Theorem 3: Consensus Hierarchy Impossibility
@@ -853,6 +935,11 @@ Following Herlihy's methodology (Theorem 5.4.1 for FIFO queues), we prove failov
     [S.CAS $arrow.r$ P3.CAS $arrow.r$ S.CAS all succeed],
     [Interleaving],
 
+    [2c],
+    [No transparent overlay for atomics],
+    [Thm 1 + Thm 2: indisting. + non-idempotent],
+    [Combined],
+
     [3],
     [$"Transparent" arrow.r not "ReliableCAS"$],
     [Reads (CN=1) cannot solve 2-consensus],
@@ -890,6 +977,10 @@ Following Herlihy's methodology (Theorem 5.4.1 for FIFO queues), we prove failov
       cannot distinguish packet loss from ACK loss, and transparency \
       constraints prevent adding the coordination mechanisms needed \
       to resolve this ambiguity. \
+      \
+      *Theorem 2's Combined Result*: Non-idempotent operations (FADD, CAS) \
+      cannot be supported by any transparent overlay. Indistinguishability (Thm 1) \
+      plus non-idempotency (Thm 2) creates an impossible dilemma. \
       \
       *Theorem 3's Key Contribution*: The failover problem IS an instance \
       of 2-consensus. The impossibility follows FROM the verified fact that \
