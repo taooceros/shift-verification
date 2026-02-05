@@ -177,11 +177,11 @@ This document provides exact correspondence between Rocq definitions/theorems an
   fst (exec_write (fst (exec_write m a v)) a v) = fst (exec_write m a v).")
 #prose[*Lemma (Write Idempotency):* For any memory $m$, address $a$, and value $v$: executing $"Write"(a,v)$ twice produces the same memory state as executing it once.]
 
-#mapping("fadd_not_idempotent", "Operations.v", "69-92", [FADD is not idempotent when delta > 0.])
+#mapping("fadd_not_idempotent", "Operations.v", "69-92", [FADD is not idempotent when delta != 0.])
 #rocq("Lemma fadd_not_idempotent : forall m a delta,
   delta <> 0 ->
   fst (exec_fadd (fst (exec_fadd m a delta)) a delta) <> fst (exec_fadd m a delta).")
-#prose[*Lemma (FADD Non-Idempotency):* For $delta > 0$: executing $"FADD"(a, delta)$ twice yields $m(a) = v_"old" + 2 delta$, not $v_"old" + delta$. Therefore FADD is not idempotent.]
+#prose[*Lemma (FADD Non-Idempotency):* For $delta != 0$: executing $"FADD"(a, delta)$ twice yields $m(a) = v_"old" + 2 delta$, not $v_"old" + delta$. Therefore FADD is not idempotent.]
 
 #line(length: 100%, stroke: 0.5pt)
 
