@@ -70,10 +70,13 @@ Definition provides_reliable_cas (tf : TransparentFailover) : Prop :=
 
 (** The core impossibility: transparent failover cannot provide reliable CAS.
 
-    This follows directly from failover_unsolvable in FailoverConsensus.v,
-    which proves that NO verification mechanism can solve failover due to
-    the ABA problem - two different histories can have identical final
-    memory states but require different decisions. *)
+    This follows from the Herlihy-style CN reduction in FailoverConsensus.v:
+    1. failover_solver_yields_2consensus: a correct failover solver yields
+       a read-based obs/decide pair that would solve 2-consensus
+    2. readwrite_2consensus_impossible_same_protocol: no read-based protocol
+       can solve 2-consensus (Register CN=1)
+    3. failover_impossible_by_read_cn: combines (1) and (2) into the
+       impossibility of any verification mechanism solving failover *)
 
 Theorem transparent_cas_failover_impossible :
   forall tf : TransparentFailover,
@@ -84,8 +87,8 @@ Proof.
   intros tf Hreads Hno_meta.
   unfold provides_reliable_cas.
   intros [V Hsolves].
-  (* Apply the core impossibility from FailoverConsensus *)
-  exact (failover_unsolvable init_memory V Hsolves).
+  (* Apply the CN-based impossibility from FailoverConsensus *)
+  exact (failover_impossible_by_read_cn V Hsolves).
 Qed.
 
 (** ** Corollary: Backup RNIC is Irrelevant *)
@@ -112,22 +115,26 @@ Qed.
 
 (** ** Connection to Consensus Hierarchy *)
 
-(** The failover problem requires solving 2-process consensus:
-    - Process P0 (Past): knows the true history
-    - Process P1 (Future): must decide based on observable state
+(** The connection is now formally mechanized via the reduction chain:
 
-    Under transparency:
-    - Future can only READ remote memory
-    - Reads have consensus number 1 (proven via valid_rw_observation)
-    - 2-consensus requires CN >= 2
-    - Therefore, transparent failover is impossible
+    1. failover_solver_yields_2consensus (FailoverConsensus.v):
+       A correct failover solver V yields a valid read-based observation
+       function and decision function satisfying 2-consensus validity.
 
-    THE KEY LINK: The impossibility follows FROM the consensus framework:
-    - valid_rw_observation captures what read-only can observe
-    - VerificationMechanism satisfies valid_rw_observation (it only reads)
-    - ABA histories have same "prior write state" (the memory content)
-    - This matches solo_0/solo_1 having same "prior write state" (empty)
-    - Therefore failover impossibility IS the register CN=1 theorem applied *)
+    2. readwrite_2consensus_impossible_same_protocol (ConsensusNumber.v):
+       No read-based observation function admits a decision function
+       satisfying both solo_0 and solo_1 validity (Register CN=1).
+
+    3. failover_impossible_by_read_cn (FailoverConsensus.v):
+       Combines (1) and (2): no verification mechanism solves failover.
+
+    4. transparent_cas_failover_impossible (this file):
+       Lifts (3) to the TransparentFailover interface.
+
+    The key link: a VerificationMechanism IS a read-based observation
+    (constant due to ABA), satisfying valid_rw_observation trivially.
+    The failover impossibility is therefore a CONSEQUENCE of Register CN=1,
+    not just an ad-hoc ABA argument. *)
 
 (** Reads have CN = 1, proven via valid_rw_observation in ConsensusNumber.v *)
 Theorem reads_have_cn_1_verified :

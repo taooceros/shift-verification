@@ -4,34 +4,34 @@
 // 2. Main body text (for §3.1)
 // 3. Appendix content (detailed proofs)
 
-// ============================================================================
+// ============================================================================ 
 // INTRO MODIFICATIONS (Replace/augment relevant paragraphs in §1)
-// ============================================================================
+// ============================================================================ 
 
 /*
 --- REPLACE the paragraph starting "However, we identify a fundamental constraint..." with: ---
 
-However, a fundamental question arises: what are the theoretical limits of transparent cross-NIC failover? We prove that SHIFT's design achieves precisely what is possible under the transparency constraint—and that extending support to atomic operations would require capabilities that transparent mechanisms fundamentally cannot provide.
+However, a fundamental question arises: what are the theoretical limits of transparent cross-NIC failover? We prove that SHIFT's design achieves precisely what is possible under the transparency constraint—and that extending support to atomic or two-sided operations without coordination would require capabilities that transparent mechanisms fundamentally cannot provide.
 
 Specifically, we identify three barriers to transparent failover:
 (1) **Indistinguishability**: The sender cannot distinguish packet loss (requiring retry) from ACK loss (where retry may corrupt data)—both produce identical observations.
-(2) **Non-idempotency**: Atomic operations (FADD, CAS) produce different results when executed twice, making incorrect retry catastrophic.
+(2) **Non-idempotency**: Atomic operations (FADD, CAS) and Two-Sided Send operations produce side effects (state modification or queue consumption) that make blind retry unsafe.
 (3) **Consensus barrier**: Determining whether an operation executed is equivalent to solving 2-process consensus, which read-only verification (the only tool available under transparency) provably cannot solve.
 
-These results establish that SHIFT operates at the boundary of what is achievable: it supports all operations where retry is safe (idempotent patterns like NCCL Simple) and correctly rejects operations where retry would violate correctness (atomics). This is not a limitation of our implementation but a fundamental property of the problem space. Any mechanism claiming broader support must either sacrifice transparency (requiring application or receiver modifications) or sacrifice correctness.
+These results establish that SHIFT operates at the boundary of what is achievable: it supports all operations where retry is safe (idempotent writes) and correctly rejects or synchronizes operations where retry would violate correctness. This is not a limitation of our implementation but a fundamental property of the problem space. Any mechanism claiming broader support must either sacrifice transparency (requiring application or receiver modifications) or sacrifice correctness.
 
 --- ADD to contributions list (after item 1): ---
 
-(2) We formally prove that SHIFT's coverage is optimal: transparent failover for atomic operations is impossible due to the consensus hierarchy barrier. Supporting atomics would require receiver-side coordination or persistent metadata—capabilities incompatible with transparency. All proofs are mechanically verified in Rocq 9.0. (§3.1, Appendix C)
+(2) We formally prove that SHIFT's coverage is optimal: transparent failover for atomic and uncoordinated two-sided operations is impossible due to the consensus hierarchy barrier. Supporting these requires receiver-side coordination (like SHIFT's handshake) or persistent metadata—capabilities incompatible with pure transparency. All proofs are mechanically verified in Rocq 9.0. (§3.1, Appendix C)
 
 --- MODIFY the conclusion paragraph to: ---
 
-This work presents SHIFT, a fault-resilient layer over RDMA that achieves the theoretical maximum of transparent cross-NIC failover. We prove that SHIFT's design is optimal: it supports all traffic patterns amenable to transparent failover (idempotent operations under appropriate protocols) while correctly rejecting patterns that would require non-transparent mechanisms (atomic operations). For supported workloads—which include the dominant NCCL Simple protocol used in distributed training—SHIFT preserves application continuity under network anomalies until the next checkpoint, minimizing training progress loss. The design requires no application modifications, incurs minimal overhead, and remains agnostic to applications. Experimental results demonstrate that SHIFT sustains high performance while delivering RDMA fault tolerance, making it a practical and effective solution for large-scale distributed LLM training.
+This work presents SHIFT, a fault-resilient layer over RDMA that achieves the theoretical maximum of transparent cross-NIC failover. We prove that SHIFT's design is optimal: it supports all traffic patterns amenable to transparent failover (idempotent operations under appropriate protocols) while correctly rejecting or synchronizing patterns that would require non-transparent mechanisms. For supported workloads—which include the dominant NCCL Simple protocol used in distributed training—SHIFT preserves application continuity under network anomalies until the next checkpoint, minimizing training progress loss. The design requires no application modifications, incurs minimal overhead, and remains agnostic to applications. Experimental results demonstrate that SHIFT sustains high performance while delivering RDMA fault tolerance, making it a practical and effective solution for large-scale distributed LLM training.
 */
 
-// ============================================================================
+// ============================================================================ 
 // PART 1: MAIN BODY SECTION (New §3.1.1 or integrate into §3.1)
-// ============================================================================
+// ============================================================================ 
 
 /*
 === 3.1.1 Theoretical Foundation: SHIFT Achieves the Optimal Boundary
@@ -48,18 +48,21 @@ We prove three theorems establishing that this dilemma is insurmountable for non
 
 **Theorem 1 (Indistinguishability).** For any transparent overlay, there exist executions with identical sender observations but opposite correctness requirements. Formally, we construct traces $\mathcal{T}_1$ (packet lost) and $\mathcal{T}_2$ (ACK lost, memory reused) where the sender view $\sigma(\mathcal{T}_1) = \sigma(\mathcal{T}_2) = [\texttt{Send}, \texttt{Timeout}]$, yet $\mathcal{T}_1$ requires retry while $\mathcal{T}_2$ forbids it.
 
-**Theorem 2 (Non-Idempotency of Atomics).** FADD and CAS are non-idempotent: retry produces incorrect state. For FADD with $\delta > 0$, double execution yields $2\delta$ instead of $\delta$. For CAS, the ABA problem allows retry to succeed twice under concurrent modification.
+**Theorem 2 (Non-Idempotency).**
+- *Atomics*: FADD and CAS are non-idempotent. FADD adds the delta twice on retry. CAS suffers from the ABA problem where a retry can succeed incorrectly under concurrent modification.
+- *Two-Sided Ops*: Retrying a SEND operation consumes an extra Receive WQE, desynchronizing the message-to-buffer mapping ("Queue Sliding"), even if the data payload itself is safe.
 
-**Theorem 3 (Consensus Hierarchy Barrier).** Correct failover requires solving 2-process consensus. By Herlihy's impossibility theorem, read-only verification has consensus number 1, which is insufficient for 2-consensus. Therefore, no transparent mechanism can correctly determine whether an atomic operation executed.
+**Theorem 3 (Consensus Hierarchy Barrier).** Correct failover requires solving 2-process consensus. By Herlihy's impossibility theorem, read-only verification has consensus number 1, which is insufficient for 2-consensus. Therefore, no transparent mechanism can correctly determine whether an operation with side effects executed.
 
-**SHIFT's Optimality.** These theorems partition RDMA operations into two classes:
+**SHIFT's Optimality.** These theorems partition RDMA operations into classes:
 
-| Class | Property | SHIFT Behavior | Theoretical Status |
-|-------|----------|----------------|-------------------|
-| Idempotent patterns | Retry produces same result | Retransmit | *Achievable* |
-| Atomic operations | Retry corrupts state | Return error | *Impossible* |
+| Class | Property | SHIFT Behavior | Theoretical Justification |
+|-------|----------|----------------|--------------------------|
+| Idempotent Writes | Retry produces same result | Retransmit | *Safe by protocol design* |
+| Atomic operations | Retry corrupts state | Return error | *Impossible to handle transparently* |
+| Two-Sided operations | Retry causes Queue Sliding | Handshake | *Requires non-transparent sync* |
 
-SHIFT supports exactly the achievable class. The "error on atomics-in-flight" policy is not a design limitation but the only correct behavior—any mechanism claiming to transparently support atomics must either be incorrect or violate transparency.
+SHIFT supports exactly the achievable class transparently. For Two-Sided operations, it correctly breaks transparency (via the handshake) to ensure correctness, validating the theorem that transparent handling is impossible. The "error on atomics-in-flight" policy is the only correct behavior for a system that cannot modify the receiver.
 
 **What Would Be Required for Atomics.** Supporting atomic operations would require at least one of:
 - *Receiver-side operation logs* with deduplication (violates transparency)
@@ -69,14 +72,12 @@ SHIFT supports exactly the achievable class. The "error on atomics-in-flight" po
 
 None of these are compatible with SHIFT's transparency constraint. Our impossibility proofs (Appendix C) formalize this: the additional "property not available" is the ability to solve 2-process consensus, which transparent read-only verification fundamentally lacks.
 
-**Practical Implication.** Fortunately, the dominant communication pattern in distributed training—NCCL Simple protocol—exhibits effective idempotency: receivers access data buffers only after observing the corresponding flag, ensuring that data retransmission completes before consumption. SHIFT's best-effort retransmission is thus sufficient for the workloads that matter most.
-
-All theorems are mechanically verified in Rocq 9.0 (~2,100 lines). The formalization is available at [CITE].
+All theorems are mechanically verified in Rocq 9.0 (~3,900 lines). Theorem 3's impossibility is formally derived from the Register CN=1 theorem via a mechanized reduction chain (`failover_impossible_by_read_cn`). The formalization is available at [CITE].
 */
 
-// ============================================================================
+// ============================================================================ 
 // PART 2: APPENDIX (Formal Verification Details)
-// ============================================================================
+// ============================================================================ 
 
 #set text(font: "New Computer Modern", size: 9pt)
 #set par(justify: true)
@@ -133,10 +134,6 @@ We formalize and mechanically verify three impossibility theorems for transparen
   A failover mechanism is _transparent_ if its retransmission decision $D : sigma(cal(T)) times "Op" -> {"retransmit", "skip"}$ depends only on the sender view—no persistent metadata, no receiver-side modifications, no application protocol changes.
 ]
 
-#definition("Idempotency")[
-  Operation $"op"$ is _idempotent_ on memory $m$ if $"exec"("exec"(m, "op"), "op") = "exec"(m, "op")$ (same final state and return value).
-]
-
 == Theorem 1: Indistinguishability of Packet Loss and ACK Loss
 
 #theorem("Impossibility of Safe Retransmission")[
@@ -162,14 +159,21 @@ We formalize and mechanically verify three impossibility theorems for transparen
 
 *Implication for SHIFT:* This theorem explains why SHIFT cannot guarantee correctness for _all_ traffic. However, for protocols where the receiver does not access data until a subsequent signal (e.g., NCCL Simple's flag mechanism), the "ACK lost + memory reused" scenario cannot occur before SHIFT completes retransmission.
 
-== Theorem 2: Non-Idempotency of Atomic Operations
+== Theorem 2: Non-Idempotency of Operations
 
 #theorem("FADD Non-Idempotency")[
   For any $delta > 0$ and memory $m$, FADD is not idempotent: $"exec"_"FADD"("exec"_"FADD"(m, a, delta), a, delta) eq.not "exec"_"FADD"(m, a, delta)$.
 ]
 
+#theorem("Queue Sliding (Two-Sided Non-Idempotency)")[
+  Retrying a SEND operation is not idempotent because it consumes an additional Receive WQE.
+]
+
 #proof[
-  Let $m[a] = v$. After one FADD: $m'[a] = v + delta$, returns $v$. After retry: $m''[a] = v + 2delta$, returns $v + delta$. Since $delta > 0$: $v + delta eq.not v + 2delta$ and return values differ.
+  Let the receiver queue $Q_R = [R_1, R_2, ...]$.
+  Trace 1 (Success): Message $M_1$ consumes $R_1$. $Q_R' = [R_2, ...]$. ACK lost.
+  Trace 2 (Retry): Message $M_1$ (retry) consumes $R_2$. $Q_R'' = [R_3, ...]$.
+  Result: $M_1$ is duplicated in buffers $B_1$ and $B_2$, and $R_2$ (intended for $M_2$) is lost. The streams are permanently misaligned.
 ]
 
 #theorem("CAS Double Success")[
@@ -193,8 +197,6 @@ We formalize and mechanically verify three impossibility theorems for transparen
 
   $S$'s single logical CAS executed twice, and $P$'s modification was silently overwritten.
 ]
-
-*The Fallacy:* "CAS retry is safe because duplicates fail" assumes no concurrent modification—violated in real distributed systems.
 
 == Theorem 3: Consensus Hierarchy Barrier
 
@@ -231,16 +233,28 @@ The hierarchy is _strict_: primitives with $"CN" = k$ cannot implement primitive
   - *Validity*: If CAS executed ($P_0$ "won"), $F(m) = "Commit"$, decision = $"proposed"[0]$. Similarly for $P_1$.
 ]
 
-#theorem("No Correct Failover Solver Exists")[
-  The ABA problem makes $F$ impossible.
+#theorem("Failover Solver Yields 2-Consensus")[
+  A correct failover solver yields a read-based protocol solving 2-consensus.
 ]
 
 #proof[
-  Consider two histories with the same final memory state $m$:
-  - $H_0$: CAS never executed $arrow.r$ correct decision is Abort
-  - $H_1$: CAS executed, then concurrent process reset value (ABA) $arrow.r$ correct decision is Commit
+  Given $F$ satisfying `solves_failover`, construct observation $"obs"(e,i) := "if" F(m_0) "then" 0 "else" 1$ (constant, trivially satisfies `valid_rw_observation`) and decision $"decide"(x) := "if" x = 0 "then" 0 "else" 1$.
 
-  Both have $m[a] = 0$ (the original expected value). $F(m)$ must return both Commit and Abort. Contradiction.
+  - Solo $P_0$: `solves_failover` on `HistExecuted`$(m_0)$ gives $F(m_0) = sans("true")$ $arrow.r$ $"obs" = 0$, $"decide"(0) = 0$ $checkmark$
+  - Solo $P_1$: `solves_failover` on `HistNotExecuted`$(m_0)$ gives $F(m_0) = sans("false")$ $arrow.r$ $"obs" = 1$, $"decide"(1) = 1$ $checkmark$
+]
+
+#theorem("Failover Impossible by Register CN=1")[
+  No correct failover solver exists. The impossibility is formally derived from the Register CN=1 theorem.
+]
+
+#proof[
+  By mechanized reduction chain:
+  1. `failover_solver_yields_2consensus`: a correct solver yields `obs` (satisfying `valid_rw_observation`) and `decide` satisfying solo validity for both processes
+  2. `readwrite_2consensus_impossible_same_protocol`: no read-based `obs`/`decide` pair can satisfy both solo validities (Register CN=1)
+  3. `failover_impossible_by_read_cn`: combines (1) and (2) into contradiction
+
+  This is not a separate ABA argument—it is a formal _consequence_ of $"CN"("Register") = 1$.
 ]
 
 #theorem("Main Impossibility")[
@@ -248,12 +262,9 @@ The hierarchy is _strict_: primitives with $"CN" = k$ cannot implement primitive
 ]
 
 #proof[
-  1. Failover requires solving 2-process consensus (distinguishing $H_0$ from $H_1$)
-  2. Transparency limits verification to read-only operations
-  3. $"CN"("Read") = 1 < 2$
-  4. By Herlihy's impossibility theorem, $"CN" = 1$ primitives cannot solve 2-consensus
-
-  Therefore, no transparent mechanism can provide correct failover for atomics.
+  The main theorem (`transparent_cas_failover_impossible`) lifts the CN-based impossibility to the `TransparentFailover` interface:
+  1. Any `provides_reliable_cas` witness yields a `VerificationMechanism` satisfying `solves_failover`
+  2. `failover_impossible_by_read_cn` derives contradiction via the Register CN=1 barrier
 ]
 
 == Mechanization Summary
@@ -266,13 +277,13 @@ The hierarchy is _strict_: primitives with $"CN" = k$ cannot implement primitive
     [*Component*], [*Lines*], [*Key Theorems*],
     [Core (Memory, Ops, Traces)], [~400], [`mem_read_write_same`, `exec_op`],
     [Theorem 1], [~300], [`sender_views_equal`, `impossibility_safe_retransmission`],
-    [Theorem 2], [~250], [`fadd_not_idempotent`, `cas_double_success`],
-    [Theorem 3], [~1150], [`register_cn_1_verified`, `no_correct_failover_solver`, `transparent_cas_failover_impossible`],
+    [Theorem 2], [~250], [`fadd_not_idempotent`, `send_queue_sliding`, `cas_double_success`],
+    [Theorem 3], [~2200], [`register_cn_1_verified`, `failover_impossible_by_read_cn`, `transparent_cas_failover_impossible`],
   ),
-  caption: [Rocq formalization statistics (total ~2,100 lines)]
+  caption: [Rocq formalization statistics (total ~3,900 lines)]
 )
 
-All proofs compile with Rocq 9.0 without axioms beyond the standard library. The formalization models RDMA operations as state transformers ($"Memory" arrow.r "Memory" times "Result"$), traces as event sequences, and the sender view as a projection function.
+All proofs compile with Rocq 9.0 without axioms beyond the standard library. The formalization models RDMA operations as state transformers ($"Memory" arrow.r "Memory" times "Result"$), traces as event sequences, and the sender view as a projection function. The failover impossibility (Theorem 3) is formally derived FROM the Register CN=1 theorem via `failover_impossible_by_read_cn`, mechanizing the connection to Herlihy's hierarchy.
 
 == Connection to SHIFT Design
 
@@ -284,8 +295,9 @@ These impossibility results directly inform SHIFT's design decisions:
   stroke: 0.5pt,
   [*Theorem*], [*SHIFT Design Choice*],
   [Thm 1: Indistinguishability], [Best-effort WR-level retransmission; error propagation when safety cannot be guaranteed],
-  [Thm 2: Atomic non-idempotency], [Return error if atomic WR is in-flight during fault],
-  [Thm 3: Consensus barrier], [No attempt to verify execution status via memory reads; rely on protocol-level idempotency instead],
+  [Thm 2: Non-idempotency (Atomics)], [Return error if atomic WR is in-flight during fault],
+  [Thm 2: Queue Sliding (Two-Sided)], [Implement 3-way handshake to re-synchronize queue indices (breaking transparency to ensure correctness)],
+  [Thm 3: Consensus barrier], [No attempt to verify execution status via memory reads; rely on protocol-level idempotency or handshake instead],
 )
 
-SHIFT's approach—supporting NCCL Simple while rejecting atomics—is not a limitation of implementation but a necessary consequence of these fundamental impossibility results. The boundary identified in Table 1 is precisely the boundary between what can and cannot be transparently failed over.
+SHIFT's approach—supporting NCCL Simple while rejecting atomics and synchronizing two-sided ops—is not a limitation of implementation but a necessary consequence of these fundamental impossibility results. The boundary identified in Table 1 is precisely the boundary between what can and cannot be transparently failed over.

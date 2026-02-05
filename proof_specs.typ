@@ -793,24 +793,30 @@ The consensus numbers are not mere definitions---they are _proven_ via the obser
       verification_via_reads tf ->
       tf.(no_metadata_writes) ->
       ~ provides_reliable_cas tf.
+  Proof.
+    intros tf Hreads Hno_meta.
+    unfold provides_reliable_cas.
+    intros [V Hsolves].
+    (* Apply the CN-based impossibility from FailoverConsensus *)
+    exact (failover_impossible_by_read_cn V Hsolves).
+  Qed.
   ```
 ]
 
 #proof-box[
-  *Key Insight*: Failover IS an instance of 2-consensus, and the impossibility follows FROM the consensus framework:
+  *Key Insight*: The impossibility is formally derived FROM the Register CN=1 theorem via a mechanized reduction chain:
 
   #table(
     columns: (1fr, 1fr),
     inset: 8pt,
-    [*Consensus Framework*], [*Failover Instance*],
-    [`valid_rw_observation`], [V reads memory],
-    [`solo_0`, `solo_1`], [H1 (executed), H0 (not executed)],
-    [Same prior writes (empty)], [Same memory (ABA)],
-    [Different required decisions], [Commit ≠ Abort],
-    [CN(Read) = 1 < 2], [V cannot distinguish],
+    [*Reduction Step*], [*Formal Theorem*],
+    [Failover solver → 2-consensus protocol], [`failover_solver_yields_2consensus`],
+    [Read-based 2-consensus impossible], [`readwrite_2consensus_impossible_same_protocol`],
+    [Combined impossibility], [`failover_impossible_by_read_cn`],
+    [Lifted to TransparentFailover], [`transparent_cas_failover_impossible`],
   )
 
-  The ABA problem IS the read-only indistinguishability problem.
+  The ABA problem IS the read-only indistinguishability problem. The connection is now formally mechanized, not merely informal.
 ]
 
 #spec-box("Corollary: Backup RNIC is Irrelevant")[
@@ -898,16 +904,44 @@ Following Herlihy's methodology (Theorem 5.4.1 for FIFO queues), we prove failov
   ```
 ]
 
+#spec-box("CN-Based Reduction: Failover Solver → 2-Consensus (Mechanized)")[
+  ```coq
+  (** Positive reduction: a correct failover solver yields
+      a read-based obs/decide pair that would solve 2-consensus *)
+  Lemma failover_solver_yields_2consensus :
+    forall V : VerificationMechanism,
+      solves_failover V ->
+      exists obs : list nat -> nat -> nat,
+        valid_rw_observation obs /\
+        exists decide : nat -> nat,
+          decide (obs solo_0 0) = 0 /\
+          decide (obs solo_1 1) = 1.
+
+  (** Combined impossibility via Register CN=1 *)
+  Theorem failover_impossible_by_read_cn :
+    forall V : VerificationMechanism,
+      ~ solves_failover V.
+  Proof.
+    intros V Hsolves.
+    destruct (failover_solver_yields_2consensus V Hsolves)
+      as [obs [Hvalid [decide [Hval0 Hval1]]]].
+    apply (readwrite_2consensus_impossible_same_protocol obs Hvalid).
+    exists decide. exact (conj Hval0 Hval1).
+  Qed.
+  ```
+]
+
 #proof-box[
-  *The Complete Herlihy-Style Argument*:
+  *The Complete Herlihy-Style Argument (Now Fully Mechanized)*:
 
   1. *Protocol Construction*: Given failover solver $F$, build 2-consensus protocol
   2. *Wait-free*: No loops $checkmark$
   3. *Agreement*: Same $F$, same memory $arrow.r$ same result $arrow.r$ same decision $checkmark$
   4. *Validity*: $F$ returns "who won" $arrow.r$ decision is winner's input $checkmark$
-  5. *Reduction*: Correct $F$ $arrow.r.double$ correct 2-consensus protocol
-  6. *Contradiction*: ABA makes $F$ impossible ($F(m) =$ true AND false)
-  7. *Conclusion*: Failover requires CN $>=$ 2; reads have CN $=$ 1; impossible $square$
+  5. *Positive Reduction* (`failover_solver_yields_2consensus`): Correct $F$ yields read-based `obs`/`decide` satisfying 2-consensus solo validity
+  6. *CN Barrier* (`readwrite_2consensus_impossible_same_protocol`): No such `obs`/`decide` exists under `valid_rw_observation`
+  7. *Combined* (`failover_impossible_by_read_cn`): Chains (5) and (6) into contradiction
+  8. *Conclusion*: Failover requires CN $>=$ 2; reads have CN $=$ 1; impossible $square$
 ]
 
 #pagebreak()
