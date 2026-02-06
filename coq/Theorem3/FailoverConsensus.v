@@ -746,3 +746,111 @@ Qed.
     │  CONCLUSION: Impossible                                     │
     └─────────────────────────────────────────────────────────────┘
 *)
+
+(** ========================================================================= *)
+(** ** Zero-Copy Semantics and Consensus Number                               *)
+(** ========================================================================= *)
+
+(** This section makes explicit the connection between zero-copy RDMA semantics
+    and Herlihy's consensus hierarchy.
+
+    KEY INSIGHT: Under zero-copy semantics, the sender's observation is
+    equivalent to a READ-ONLY register, which has consensus number 1.
+
+    Zero-copy RDMA constrains what the sender can observe:
+    - Sender posts operation             → ObsSent
+    - Sender receives completion OR timeout → ObsCompleted or ObsTimeout
+    - Sender CANNOT observe receiver-side events (EvReceive, EvExecute)
+    - Sender CANNOT observe network events (EvPacketLost, EvAckLost)
+
+    This is exactly what sender_view captures! The sender's view is "read-only"
+    in the sense that it can only observe outcomes, not internal state.
+
+    The structural isomorphism with Herlihy's CN=1 impossibility:
+
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │  HERLIHY (Read-only Register)     │  RDMA (Zero-Copy Sender View)   │
+    │  ─────────────────────────────    │  ─────────────────────────────  │
+    │                                   │                                 │
+    │  Solo P0: reads empty register    │  T1: sender sees timeout        │
+    │  Solo P1: reads empty register    │  T2: sender sees timeout        │
+    │           ↓                       │           ↓                     │
+    │  Same observation (empty)         │  Same sender_view               │
+    │           ↓                       │           ↓                     │
+    │  Must decide 0 for P0 validity    │  Must Abort for T1 (retry)      │
+    │  Must decide 1 for P1 validity    │  Must Commit for T2 (no retry)  │
+    │           ↓                       │           ↓                     │
+    │  IMPOSSIBLE: same obs, diff dec   │  IMPOSSIBLE: same view, diff dec│
+    └─────────────────────────────────────────────────────────────────────┘
+
+    Therefore: Zero-copy RDMA operations have effective CN=1 for failover,
+    and by Herlihy's hierarchy, cannot solve the 2-consensus required for
+    failover coordination. *)
+
+(** Formalization: Under zero-copy, any decision function on sender observations
+    must return the same result for indistinguishable traces. *)
+
+Definition SenderDecisionFunction := list SenderObs -> bool.
+
+(** The CN=1 property: equal observations yield equal decisions.
+    This is trivially true for any function, but the SIGNIFICANCE is that
+    zero-copy constrains us to use such functions. *)
+Theorem zero_copy_cn1_property :
+  forall (f : SenderDecisionFunction) (obs1 obs2 : list SenderObs),
+    obs1 = obs2 ->
+    f obs1 = f obs2.
+Proof.
+  intros f obs1 obs2 Heq. rewrite Heq. reflexivity.
+Qed.
+
+(** The consequence for traces: indistinguishable traces get the same decision *)
+Theorem zero_copy_trace_indistinguishability :
+  forall (decide : SenderDecisionFunction) (t1 t2 : Trace),
+    sender_view t1 = sender_view t2 ->
+    decide (sender_view t1) = decide (sender_view t2).
+Proof.
+  intros decide t1 t2 Hview.
+  apply zero_copy_cn1_property. exact Hview.
+Qed.
+
+(** The impossibility: no sender decision function can satisfy both requirements *)
+Theorem zero_copy_failover_impossible :
+  forall (decide : SenderDecisionFunction),
+    forall t1 t2 : Trace,
+      (* Indistinguishable to sender *)
+      sender_view t1 = sender_view t2 ->
+      (* But require different decisions *)
+      ~ (decide (sender_view t1) = true /\ decide (sender_view t2) = false).
+Proof.
+  intros decide t1 t2 Hview [H1 H2].
+  rewrite (zero_copy_trace_indistinguishability decide t1 t2 Hview) in H1.
+  rewrite H1 in H2. discriminate.
+Qed.
+
+(** Concrete instantiation with our traces *)
+Theorem zero_copy_failover_impossible_concrete :
+  forall (decide : SenderDecisionFunction) (addr : Addr) (V1 V_new : Val),
+    let op := OpWrite addr V1 in
+    let t1 := [EvSend op; EvPacketLost op; EvTimeout op] in
+    let t2 := [EvSend op; EvReceive op; EvExecute op ResWriteAck;
+               EvAppReuse addr V_new; EvAckLost op; EvTimeout op] in
+    (* t1 requires retry (true), t2 requires no retry (false) *)
+    (* But they have the same sender_view! *)
+    ~ (decide (sender_view t1) = true /\ decide (sender_view t2) = false).
+Proof.
+  intros decide addr V1 V_new op t1 t2.
+  apply zero_copy_failover_impossible.
+  (* sender_view t1 = sender_view t2 *)
+  unfold t1, t2, op. simpl. reflexivity.
+Qed.
+
+(** This completes the Herlihy-style argument:
+
+    1. Zero-copy semantics constrains sender to observe only sender_view
+    2. sender_view is a "read-only" observation (CN=1)
+    3. Failover requires distinguishing executed vs not-executed (2-consensus)
+    4. CN=1 < CN=2, so by Herlihy's hierarchy, failover is impossible
+
+    The key theorem `failover_impossible_by_read_cn` formalizes step 4 by
+    showing that any failover solver would yield a 2-consensus protocol,
+    contradicting the Register CN=1 impossibility. *)

@@ -224,7 +224,8 @@ Proof.
   intros a delta m Hdelta.
   apply non_idempotent_retry_unsafe.
   apply fadd_non_idempotent.
-  exact Hdelta.
+  (* delta > 0 implies delta <> 0 *)
+  lia.
 Qed.
 
 (** ** Main Result: Atomic Operations Cannot Be Transparently Retransmitted *)
@@ -376,7 +377,9 @@ Proof.
   - (* FADD case *)
     intros a delta Hdelta.
     apply (no_transparent_overlay_non_idempotent Hindist overlay (OpFADD a delta) init_memory).
-    apply fadd_non_idempotent. exact Hdelta.
+    apply fadd_non_idempotent.
+    (* delta > 0 implies delta <> 0 *)
+    lia.
   - (* CAS case *)
     intros a expected new_val Hmem Hdiff.
     apply (no_transparent_overlay_non_idempotent Hindist overlay (OpCAS a expected new_val) init_memory).
