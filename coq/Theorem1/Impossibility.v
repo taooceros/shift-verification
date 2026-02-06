@@ -285,7 +285,15 @@ Proof.
   rewrite H1, H2 in Heq. discriminate.
 Qed.
 
-(** ** Non-Transparent Overlay CAN Achieve Both Safety and Liveness *)
+(** ========================================================================= *)
+(** ** SUPPLEMENTARY: Non-Transparent Overlay CAN Achieve Both              *)
+(** ========================================================================= *)
+
+(** The following results are SUPPLEMENTARY - they exist to validate our
+    model by showing that transparency is the essential barrier. A non-transparent
+    overlay that can observe the full trace (including execution events) can
+    trivially achieve both safety and liveness. This is NOT part of the main
+    impossibility result, but demonstrates that our definitions are sensible. *)
 
 (** Safety and Liveness for general (non-transparent) overlays.
     These use the raw Overlay type, not TransparentOverlay. *)

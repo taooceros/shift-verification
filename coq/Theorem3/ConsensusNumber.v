@@ -174,8 +174,13 @@ Section FADD_Observation.
 End FADD_Observation.
 
 (** ========================================================================= *)
-(** ** FADD Cannot Solve 3-Consensus (For ALL Protocols)                      *)
+(** ** SUPPLEMENTARY: FADD Cannot Solve 3-Consensus                           *)
 (** ========================================================================= *)
+
+(** The following FADD CN=2 results are SUPPLEMENTARY - they exist to show
+    that our observation constraints correctly capture FADD's power. This is
+    NOT needed for the main impossibility theorem, which only requires that
+    reads have CN=1. We include this to demonstrate the model is complete. *)
 
 (** KEY INSIGHT: FADD's fundamental limitation is that addition is commutative.
 
@@ -299,8 +304,13 @@ Section FADD_3Consensus.
 End FADD_3Consensus.
 
 (** ========================================================================= *)
-(** ** FADD CAN Solve 2-Consensus                                             *)
+(** ** SUPPLEMENTARY: FADD CAN Solve 2-Consensus                              *)
 (** ========================================================================= *)
+
+(** The following FADD 2-consensus results are SUPPLEMENTARY - they exist to
+    validate our model by showing that FADD truly has CN=2 (can solve 2 but
+    not 3). These positive results are NOT needed for the main impossibility
+    theorem, which only requires that reads have CN=1. *)
 
 Section FADD_2Consensus.
 
@@ -800,8 +810,12 @@ Section ReadWrite_2Consensus_Impossible.
 End ReadWrite_2Consensus_Impossible.
 
 (** ========================================================================= *)
-(** ** Read/Write CAN Solve 1-Consensus (Trivially)                           *)
+(** ** SUPPLEMENTARY: Read/Write CAN Solve 1-Consensus (Trivially)            *)
 (** ========================================================================= *)
+
+(** The following is SUPPLEMENTARY - it exists only to show that our model
+    correctly captures that registers can solve at least 1-consensus. This
+    trivial result is NOT needed for the main impossibility theorem. *)
 
 Section ReadWrite_1Consensus.
 
@@ -830,8 +844,13 @@ End ReadWrite_1Consensus.
     that can satisfy validity for both solo_0 and solo_1 executions. *)
 
 (** ========================================================================= *)
-(** ** CAS Solves n-Consensus for Any n (CN = ∞)                              *)
+(** ** SUPPLEMENTARY: CAS Solves n-Consensus for Any n (CN = ∞)               *)
 (** ========================================================================= *)
+
+(** The following CAS CN=∞ results are SUPPLEMENTARY - they exist to show
+    that our observation constraints correctly model CAS. This is NOT needed
+    for the main impossibility theorem, which only requires that reads have
+    CN=1. We include this for completeness of the Herlihy hierarchy model. *)
 
 (** The CAS consensus protocol:
 
@@ -1214,7 +1233,10 @@ Proof.
   exact readwrite_2consensus_impossible_same_protocol.
 Qed.
 
-(** ** FADD has CN = 2 *)
+(** ** SUPPLEMENTARY: FADD has CN = 2 *)
+
+(** The following FADD CN=2 verification is SUPPLEMENTARY - it exists to
+    validate our model but is NOT needed for the main impossibility theorem. *)
 
 (** Proof that FADD CAN solve 2-consensus: no ambiguity exists *)
 Theorem fadd_can_solve_2 :
@@ -1236,7 +1258,10 @@ Proof.
   exact fadd_cannot_solve_3consensus.
 Qed.
 
-(** ** CAS has CN = ∞ *)
+(** ** SUPPLEMENTARY: CAS has CN = ∞ *)
+
+(** The following CAS CN=∞ verification is SUPPLEMENTARY - it exists to
+    validate our model but is NOT needed for the main impossibility theorem. *)
 
 (** Proof that CAS can distinguish ANY two executions with different winners *)
 Theorem cas_can_solve_any_n :
