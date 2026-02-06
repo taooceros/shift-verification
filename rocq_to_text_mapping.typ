@@ -675,7 +675,7 @@ Qed.")
   ("discriminate.", [`0` and `1` are distinct constructors (`O` vs `S O`). `discriminate` derives `False`. _No goals remaining._]),
 )
 
-#mapping("fadd_cannot_solve_3consensus", "ConsensusNumber.v", "261-278", [*CN(FADD) = 2*: Cannot solve 3-consensus.])
+#mapping("fadd_cannot_solve_3consensus", "ConsensusNumber.v", "261-278", [*SUPPLEMENTARY — CN(FADD) = 2*: Cannot solve 3-consensus.])
 #rocq("Theorem fadd_cannot_solve_3consensus :
   forall obs : list nat -> nat -> nat,
     valid_fadd_observation obs ->
@@ -691,7 +691,7 @@ Proof.
   rewrite Hval012 in Hval102.
   discriminate.
 Qed.")
-#prose[*Theorem (FADD CN = 2):* FADD cannot solve 3-consensus.]
+#prose[*SUPPLEMENTARY — Theorem (FADD CN = 2):* FADD cannot solve 3-consensus. This result validates our model but is not required for the main impossibility theorem.]
 #annotated-proof(
   ("intros obs Hvalid [decide [Hval012 Hval102]].", [*Initial state* — _Goal:_ `forall obs, valid_fadd_observation obs -> ~ exists decide, decide (obs exec_012 2) = inp (winner exec_012) /\\ decide (obs exec_102 2) = inp (winner exec_102)`. \
   Introduce and destruct. _Context:_ `obs : list nat -> nat -> nat`, `Hvalid : valid_fadd_observation obs`, `decide : nat -> nat`, `Hval012 : decide (obs exec_012 2) = inp (winner exec_012)`, `Hval102 : decide (obs exec_102 2) = inp (winner exec_102)`. _Goal:_ `False`.]),
@@ -704,7 +704,7 @@ Qed.")
   ("discriminate.", [`0 ≠ 1`. `discriminate` derives `False`. _No goals remaining._]),
 )
 
-#mapping("valid_cas_no_ambiguity", "ConsensusNumber.v", "1092-1104", [*CN(CAS) = $infinity$*: Can solve any $n$-consensus.])
+#mapping("valid_cas_no_ambiguity", "ConsensusNumber.v", "1111-1123", [*SUPPLEMENTARY — CN(CAS) = $infinity$*: Can solve any $n$-consensus.])
 #rocq("Theorem valid_cas_no_ambiguity :
   forall obs : list nat -> nat -> nat,
     valid_cas_observation obs ->
@@ -712,7 +712,7 @@ Qed.")
       exec1 <> [] -> exec2 <> [] ->
       winner exec1 <> winner exec2 ->
       forall i, obs exec1 i <> obs exec2 i.")
-#prose[*Theorem (CAS CN = $infinity$):* Any valid CAS observation allows solving $n$-consensus for all $n$.
+#prose[*SUPPLEMENTARY — Theorem (CAS CN = $infinity$):* Any valid CAS observation allows solving $n$-consensus for all $n$. This result validates our model but is not required for the main impossibility theorem.
 
 *Proof:* CAS observations directly reveal the winner. Different winners $->$ different observations $->$ always distinguishable. $square$]
 
