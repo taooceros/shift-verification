@@ -31,7 +31,7 @@ Definition Idempotent (op : Op) (m : Memory) : Prop :=
 (** ** Non-Idempotency of FADD *)
 
 Theorem fadd_non_idempotent : forall a delta m,
-  delta > 0 ->
+  delta <> 0 ->
   ~ Idempotent (OpFADD a delta) m.
 Proof.
   intros a delta m Hdelta.
@@ -45,7 +45,7 @@ Proof.
   (* So m2[a] = old + 2*delta *)
 
   (* If m1 = m2, then m1[a] = m2[a], i.e., old + delta = old + 2*delta *)
-  (* This implies delta = 0, contradicting delta > 0 *)
+  (* This implies delta = 0, contradicting delta <> 0 *)
 
   set (old := mem_read m a) in *.
   set (m1 := mem_write m a (old + delta)) in *.
