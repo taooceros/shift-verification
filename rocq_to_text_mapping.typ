@@ -263,14 +263,23 @@ This document provides exact correspondence between Rocq definitions/theorems an
 
 == Overlay Properties (`Core/Properties.v`)
 
-#mapping("TransparentOverlay", "Properties.v", "110-117", [A transparent failover mechanism.])
+#mapping("Overlay", "Properties.v", "109", [An overlay decision function.])
+#rocq("Definition Overlay := Trace -> Op -> bool.")
+#prose[An _overlay_ is a function $O : cal(T) times "Op" -> {"retransmit", "skip"}$ that can observe the full trace to make retransmission decisions.]
+
+#mapping("IsTransparent", "Properties.v", "114-117", [Transparency constraint on overlays.])
+#rocq("Definition IsTransparent (overlay : Overlay) : Prop :=
+  forall t1 t2 op,
+    sender_view t1 = sender_view t2 ->
+    overlay t1 op = overlay t2 op.")
+#prose[An overlay is _transparent_ if its decision depends *only* on the sender view: whenever two traces have identical sender views ($sigma(cal(T)_1) = sigma(cal(T)_2)$), the overlay must make the same retransmission decision. This is the key constraint — the overlay cannot use information beyond what the sender observes.]
+
+#mapping("TransparentOverlay", "Properties.v", "120-123", [A transparent failover mechanism.])
 #rocq("Record TransparentOverlay := {
-  decide_retransmit : list SenderObs -> Op -> bool;
-  decision_deterministic : forall obs1 obs2 op,
-    obs1 = obs2 ->
-    decide_retransmit obs1 op = decide_retransmit obs2 op;
+  decide_retransmit : Overlay;
+  transparency : IsTransparent decide_retransmit;
 }.")
-#prose[A _transparent overlay_ is a retransmission decision function $D : sigma(cal(T)) times "Op" -> {"retransmit", "skip"}$ that depends *only* on the sender view. No persistent metadata, no receiver-side modifications.]
+#prose[A _transparent overlay_ bundles an overlay function with a proof of its transparency. The `transparency` field witnesses that the overlay's decisions depend only on `sender_view`.]
 
 #mapping("execution_count", "Properties.v", "70-76", [Count executions of an operation.])
 #rocq("Fixpoint execution_count (t : Trace) (op : Op) : nat :=
@@ -332,30 +341,27 @@ This document provides exact correspondence between Rocq definitions/theorems an
 
 == Main Impossibility (`Theorem1/Impossibility.v`)
 
-#mapping("ProvidesSafety", "Impossibility.v", "71-77", [Safety: no ghost writes.])
+#mapping("ProvidesSafety", "Impossibility.v", "65-71", [Safety: no ghost writes.])
 #rocq("Definition ProvidesSafety (overlay : TransparentOverlay) : Prop :=
   forall t op V_new,
     In (EvAppReuse A_data V_new) t ->
     op_executed t op ->
-    overlay.(decide_retransmit) (sender_view t) op = false.")
-#prose[_Safety_: If operation was executed and memory was reused, the overlay must *not* retransmit (to avoid overwriting new data).]
+    overlay.(decide_retransmit) t op = false.")
+#prose[_Safety_: If operation was executed and memory was reused, the overlay must *not* retransmit (to avoid overwriting new data). Note: `decide_retransmit` takes the full trace `t`, but the `transparency` proof ensures the decision depends only on `sender_view t`.]
 
-#mapping("ProvidesLiveness", "Impossibility.v", "82-89", [Liveness: lost packets retransmitted.])
+#mapping("ProvidesLiveness", "Impossibility.v", "76-83", [Liveness: lost packets retransmitted.])
 #rocq("Definition ProvidesLiveness (overlay : TransparentOverlay) : Prop :=
   forall t op,
     In (EvSend op) t ->
     ~ op_executed t op ->
     sender_saw_timeout t op ->
-    overlay.(decide_retransmit) (sender_view t) op = true.")
+    overlay.(decide_retransmit) t op = true.")
 #prose[_Liveness_: If operation was sent but not executed (packet lost), and sender timed out, the overlay *must* retransmit.]
 
-#mapping("Transparent", "Impossibility.v", "54-59", [Transparency constraint on overlay.])
+#mapping("Transparent", "Impossibility.v", "48-52", [Transparency constraint on overlay.])
 #rocq("Definition Transparent (overlay : TransparentOverlay) : Prop :=
-  forall t1 t2 op,
-    sender_view t1 = sender_view t2 ->
-    overlay.(decide_retransmit) (sender_view t1) op =
-    overlay.(decide_retransmit) (sender_view t2) op.")
-#prose[_Transparency_: if two traces have identical sender views, the overlay must make the same retransmission decision. The overlay cannot use information beyond `sender_view`.]
+  IsTransparent overlay.(decide_retransmit).")
+#prose[_Transparency_: if two traces have identical sender views, the overlay must make the same retransmission decision. This is now defined as `IsTransparent` applied to the overlay's decision function, ensuring the overlay cannot use information beyond `sender_view`.]
 
 #mapping("SilentReceiver", "Impossibility.v", "27-29", [No application-level ACKs.])
 #rocq("Definition SilentReceiver : Prop :=
@@ -418,41 +424,42 @@ Proof. unfold T1_concrete, T2_concrete. simpl. reflexivity. Qed.")
   ("reflexivity.", [The two sides are syntactically identical. Rocq's definitional equality closes the goal. _No goals remaining._]),
 )
 
-#mapping("impossibility_safe_retransmission", "Impossibility.v", "181-238", [*THEOREM 1*: No transparent overlay provides both safety and liveness.])
+#mapping("impossibility_safe_retransmission", "Impossibility.v", "175-229", [*THEOREM 1*: No transparent overlay provides both safety and liveness.])
 #rocq("Theorem impossibility_safe_retransmission :
   forall overlay : TransparentOverlay,
     Transparent overlay ->
-    SilentReceiver -> MemoryReuseAllowed -> NoExactlyOnce ->
+    SilentReceiver -> MemoryReuseAllowed ->
     ~ (ProvidesSafety overlay /\\ ProvidesLiveness overlay).
 Proof.
-  intros overlay Htrans Hsilent Hreuse Hno_eo [Hsafe Hlive].
+  intros overlay Htrans Hsilent Hno_eo [Hsafe Hlive].
   pose (V1 := 1). pose (V_new := 2).
   pose (the_op := OpWrite A_data V1).
   pose (t1 := T1_concrete V1). pose (t2 := T2_concrete V1 V_new).
-  assert (Hlive_T1 : overlay.(decide_retransmit) (sender_view t1) the_op = true).
+  assert (Hlive_T1 : overlay.(decide_retransmit) t1 the_op = true).
   { apply (Hlive ...). apply T1_has_send. apply T1_not_executed. apply T1_has_timeout. }
-  assert (Hsafe_T2 : overlay.(decide_retransmit) (sender_view t2) the_op = false).
+  assert (Hsafe_T2 : overlay.(decide_retransmit) t2 the_op = false).
   { apply (Hsafe ...). apply T2_has_reuse. apply T2_executed. }
   assert (Hviews_eq : sender_view t1 = sender_view t2).
   { apply sender_views_equal. }
-  assert (Hdec_eq : ... = ...).
+  assert (Hdec_eq : overlay.(decide_retransmit) t1 the_op =
+                    overlay.(decide_retransmit) t2 the_op).
   { apply Htrans. exact Hviews_eq. }
   rewrite Hlive_T1 in Hdec_eq. rewrite Hsafe_T2 in Hdec_eq.
   discriminate.
 Qed.")
 #prose[*Theorem 1 (Impossibility of Safe Retransmission):* Under transparency, no overlay can provide both safety and liveness.]
 #annotated-proof(
-  ("intros overlay Htrans Hsilent Hreuse Hno_eo [Hsafe Hlive].", [*Initial state* — _Goal:_ `forall overlay, Transparent overlay -> SilentReceiver -> ... -> ~ (ProvidesSafety overlay /\\ ProvidesLiveness overlay)`. \
-  Introduce all hypotheses. The `~` unfolds to `... -> False`. The final `[Hsafe Hlive]` destructs the conjunction. _Context:_ `overlay : TransparentOverlay`, `Htrans : Transparent overlay`, `Hsilent : SilentReceiver`, `Hreuse : MemoryReuseAllowed`, `Hno_eo : NoExactlyOnce`, `Hsafe : ProvidesSafety overlay`, `Hlive : ProvidesLiveness overlay`. _Goal:_ `False`.]),
+  ("intros overlay Htrans Hsilent Hno_eo [Hsafe Hlive].", [*Initial state* — _Goal:_ `forall overlay, Transparent overlay -> SilentReceiver -> ... -> ~ (ProvidesSafety overlay /\\ ProvidesLiveness overlay)`. \
+  Introduce all hypotheses. The `~` unfolds to `... -> False`. The final `[Hsafe Hlive]` destructs the conjunction. _Context:_ `overlay : TransparentOverlay`, `Htrans : Transparent overlay`, `Hsilent : SilentReceiver`, `Hreuse : MemoryReuseAllowed`, `Hsafe : ProvidesSafety overlay`, `Hlive : ProvidesLiveness overlay`. _Goal:_ `False`.]),
   ("pose (V1 := 1). pose (V_new := 2).", [Bind concrete values. _Context adds:_ `V1 := 1 : nat`, `V_new := 2 : nat`. _Goal:_ `False` (unchanged).]),
   ("pose (the_op := OpWrite A_data V1).", [_Context adds:_ `the_op := OpWrite A_data 1 : Op`. _Goal:_ `False`.]),
   ("pose (t1 := T1_concrete V1).", [_Context adds:_ `t1 := T1_concrete 1 : Trace` (the packet-loss trace). _Goal:_ `False`.]),
   ("pose (t2 := T2_concrete V1 V_new).", [_Context adds:_ `t2 := T2_concrete 1 2 : Trace` (the ACK-loss + reuse trace). _Goal:_ `False`.]),
-  ("assert (Hlive_T1 : ... = true). { apply Hlive ... }", [Establishes `Hlive_T1 : decide_retransmit overlay (sender_view t1) the_op = true`. The sub-proof applies `Hlive` (liveness) to $cal(T)_1$: sent (`T1_has_send`), not executed (`T1_not_executed`), timed out (`T1_has_timeout`), so the overlay must retransmit. _Goal:_ `False` (unchanged after assert is discharged).]),
-  ("assert (Hsafe_T2 : ... = false). { apply Hsafe ... }", [Establishes `Hsafe_T2 : decide_retransmit overlay (sender_view t2) the_op = false`. The sub-proof applies `Hsafe` (safety) to $cal(T)_2$: memory reused (`T2_has_reuse`), operation executed (`T2_executed`), so the overlay must not retransmit. _Goal:_ `False`.]),
+  ("assert (Hlive_T1 : ... = true). { apply Hlive ... }", [Establishes `Hlive_T1 : decide_retransmit overlay t1 the_op = true`. The sub-proof applies `Hlive` (liveness) to $cal(T)_1$: sent (`T1_has_send`), not executed (`T1_not_executed`), timed out (`T1_has_timeout`), so the overlay must retransmit. Note: `decide_retransmit` now takes the trace directly. _Goal:_ `False` (unchanged after assert is discharged).]),
+  ("assert (Hsafe_T2 : ... = false). { apply Hsafe ... }", [Establishes `Hsafe_T2 : decide_retransmit overlay t2 the_op = false`. The sub-proof applies `Hsafe` (safety) to $cal(T)_2$: memory reused (`T2_has_reuse`), operation executed (`T2_executed`), so the overlay must not retransmit. _Goal:_ `False`.]),
   ("assert (Hviews_eq : sender_view t1 = sender_view t2).", [Establishes `Hviews_eq : sender_view t1 = sender_view t2` via `sender_views_equal`. Both traces yield `[ObsSent op; ObsTimeout op]`. _Goal:_ `False`.]),
-  ("assert (Hdec_eq : ...). { apply Htrans. exact Hviews_eq. }", [Establishes `Hdec_eq : decide_retransmit overlay (sender_view t1) the_op = decide_retransmit overlay (sender_view t2) the_op` by applying `Htrans` (transparency): identical sender views $=>$ identical decisions. _Goal:_ `False`.]),
-  ("rewrite Hlive_T1 in Hdec_eq.", [Substitute the LHS of `Hdec_eq` using `Hlive_T1`. _`Hdec_eq` becomes:_ `true = decide_retransmit overlay (sender_view t2) the_op`. _Goal:_ `False`.]),
+  ("assert (Hdec_eq : ...). { apply Htrans. exact Hviews_eq. }", [Establishes `Hdec_eq : decide_retransmit overlay t1 the_op = decide_retransmit overlay t2 the_op` by applying `Htrans` (transparency): `Htrans` is `IsTransparent decide_retransmit`, so identical sender views $=>$ identical decisions even though the traces differ. _Goal:_ `False`.]),
+  ("rewrite Hlive_T1 in Hdec_eq.", [Substitute the LHS of `Hdec_eq` using `Hlive_T1`. _`Hdec_eq` becomes:_ `true = decide_retransmit overlay t2 the_op`. _Goal:_ `False`.]),
   ("rewrite Hsafe_T2 in Hdec_eq.", [Substitute the RHS using `Hsafe_T2`. _`Hdec_eq` becomes:_ `true = false`. _Goal:_ `False`.]),
   ("discriminate.", [`true` and `false` are distinct constructors of `bool`. `discriminate` derives `False` from `true = false`. _No goals remaining._]),
 )
@@ -523,22 +530,28 @@ Single logical CAS executed twice. $P$'s modification silently overwritten.]
 
 == Combined Result (`Theorem2/Atomics.v`)
 
-#mapping("no_transparent_overlay_non_idempotent", "Atomics.v", "328-352", [No transparent overlay for non-idempotent ops.])
+#mapping("no_transparent_overlay_non_idempotent", "Atomics.v", "328-355", [No transparent overlay for non-idempotent ops.])
 #rocq("Theorem no_transparent_overlay_non_idempotent :
   IndistinguishableExecutionStatus ->
   forall (overlay : TransparentOverlay) (op : Op) (m : Memory),
     ~ Idempotent op m ->
     ~ (LiveRetransmit overlay /\\
-       (forall t, op_executed t op -> decide_retransmit (sender_view t) op = false)).")
-#prose[*Theorem (Combined):* Given indistinguishable execution status (Theorem 1) and non-idempotency (Theorem 2), no transparent overlay can provide both liveness (retry on packet loss) and safety (no retry after execution).]
+       (forall t, op_executed t op -> overlay.(decide_retransmit) t op = false)).")
+#prose[*Theorem (Combined):* Given indistinguishable execution status (Theorem 1) and non-idempotency (Theorem 2), no transparent overlay can provide both liveness (retry on packet loss) and safety (no retry after execution). Note: `decide_retransmit` now takes the trace directly; the transparency proof (in the `TransparentOverlay` record) ensures decisions depend only on `sender_view`.]
 
-#mapping("no_transparent_overlay_atomics", "Atomics.v", "355-384", [Corollary for atomic operations.])
+#mapping("no_transparent_overlay_atomics", "Atomics.v", "358-387", [Corollary for atomic operations.])
 #rocq("Corollary no_transparent_overlay_atomics :
   IndistinguishableExecutionStatus ->
   forall (overlay : TransparentOverlay),
-    (forall a delta, delta > 0 -> ~ (LiveRetransmit overlay /\\ SafeNoRetry overlay (OpFADD a delta))) /\\
-    (forall a expected new_val, ... -> ~ (LiveRetransmit overlay /\\ SafeNoRetry overlay (OpCAS ...))).")
-#prose[*Corollary:* No transparent overlay supports FADD (with $delta > 0$) or successful CAS (with $"exp" != "new"$).]
+    (forall a delta, delta > 0 ->
+      ~ (LiveRetransmit overlay /\\
+         (forall t, op_executed t (OpFADD a delta) ->
+           overlay.(decide_retransmit) t (OpFADD a delta) = false))) /\\
+    (forall a expected new_val, ... ->
+      ~ (LiveRetransmit overlay /\\
+         (forall t, op_executed t (OpCAS a expected new_val) ->
+           overlay.(decide_retransmit) t (OpCAS a expected new_val) = false))).")
+#prose[*Corollary:* No transparent overlay supports FADD (with $delta > 0$) or successful CAS (with $"exp" != "new"$). The inline safety condition requires that the overlay not retransmit when the operation has been executed.]
 
 #pagebreak()
 

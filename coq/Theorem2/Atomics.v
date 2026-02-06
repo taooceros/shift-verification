@@ -311,7 +311,7 @@ Definition LiveRetransmit (overlay : TransparentOverlay) : Prop :=
     In (EvSend op) t ->
     ~ op_executed t op ->
     sender_saw_timeout t op ->
-    overlay.(decide_retransmit) (sender_view t) op = true.
+    overlay.(decide_retransmit) t op = true.
 
 (** The core impossibility: identical sender views with different execution status *)
 Definition IndistinguishableExecutionStatus : Prop :=
@@ -331,23 +331,26 @@ Theorem no_transparent_overlay_non_idempotent :
     ~ Idempotent op m ->
     (* Cannot have both safety and liveness *)
     ~ (LiveRetransmit overlay /\
-       (forall t, op_executed t op -> overlay.(decide_retransmit) (sender_view t) op = false)).
+       (forall t, op_executed t op -> overlay.(decide_retransmit) t op = false)).
 Proof.
   intros Hindist overlay op m Hnon_idem [Hlive Hsafe].
   (* Get the two indistinguishable traces *)
   destruct (Hindist op) as [t1 [t2 [Hview_eq [Hsend1 [Hsend2 [Hto1 [Hto2 [Hno_exec1 Hexec2]]]]]]]].
 
   (* From liveness on t1: must retry *)
-  assert (Hretry : overlay.(decide_retransmit) (sender_view t1) op = true).
+  assert (Hretry : overlay.(decide_retransmit) t1 op = true).
   { apply (Hlive t1 op); assumption. }
 
   (* From safety on t2: must not retry *)
-  assert (Hno_retry : overlay.(decide_retransmit) (sender_view t2) op = false).
+  assert (Hno_retry : overlay.(decide_retransmit) t2 op = false).
   { apply (Hsafe t2). assumption. }
 
-  (* But sender_view t1 = sender_view t2, contradiction *)
-  rewrite Hview_eq in Hretry.
-  rewrite Hretry in Hno_retry.
+  (* By transparency: equal sender_views → equal decisions *)
+  assert (Hdec_eq : overlay.(decide_retransmit) t1 op = overlay.(decide_retransmit) t2 op).
+  { apply overlay.(transparency). exact Hview_eq. }
+
+  (* Contradiction: true = false *)
+  rewrite Hretry, Hno_retry in Hdec_eq.
   discriminate.
 Qed.
 
@@ -359,14 +362,14 @@ Corollary no_transparent_overlay_atomics :
     (forall a delta, delta > 0 ->
       ~ (LiveRetransmit overlay /\
          (forall t, op_executed t (OpFADD a delta) ->
-           overlay.(decide_retransmit) (sender_view t) (OpFADD a delta) = false))) /\
+           overlay.(decide_retransmit) t (OpFADD a delta) = false))) /\
     (* For CAS where first execution succeeds and expected <> new_val *)
     (forall a expected new_val,
       mem_read init_memory a = expected ->
       expected <> new_val ->
       ~ (LiveRetransmit overlay /\
          (forall t, op_executed t (OpCAS a expected new_val) ->
-           overlay.(decide_retransmit) (sender_view t) (OpCAS a expected new_val) = false))).
+           overlay.(decide_retransmit) t (OpCAS a expected new_val) = false))).
 Proof.
   intros Hindist overlay.
   split.

@@ -103,17 +103,23 @@ Definition Live (t : Trace) : Prop :=
 
 (** ** Overlay Model *)
 
-(** An overlay is a function that decides whether to retransmit based on observations *)
-Definition RetransmitDecision := list SenderObs -> Op -> bool.
+(** An overlay is a function that decides whether to retransmit based on the trace.
+    Importantly, the overlay can observe the FULL trace (including internal events),
+    but a transparent overlay must make decisions based only on sender-observable events. *)
+Definition Overlay := Trace -> Op -> bool.
 
-(** Properties of a transparent overlay *)
+(** A transparent overlay: decisions depend only on sender observations.
+    This is the key constraint - if two traces have the same sender view,
+    a transparent overlay must make the same retransmission decision. *)
+Definition IsTransparent (overlay : Overlay) : Prop :=
+  forall t1 t2 op,
+    sender_view t1 = sender_view t2 ->
+    overlay t1 op = overlay t2 op.
+
+(** Bundle an overlay with its transparency proof *)
 Record TransparentOverlay := {
-  decide_retransmit : RetransmitDecision;
-
-  (* Transparency: decision only depends on sender observations *)
-  decision_deterministic : forall obs1 obs2 op,
-    obs1 = obs2 ->
-    decide_retransmit obs1 op = decide_retransmit obs2 op;
+  decide_retransmit : Overlay;
+  transparency : IsTransparent decide_retransmit;
 }.
 
 (** ** The Core Dilemma *)
@@ -135,5 +141,5 @@ Definition no_retransmit_may_violate_liveness (overlay : TransparentOverlay) : P
   exists t op,
     sender_saw_timeout t op /\
     ~ op_executed t op /\
-    overlay.(decide_retransmit) (sender_view t) op = false ->
+    overlay.(decide_retransmit) t op = false ->
     ~ op_completed t op.

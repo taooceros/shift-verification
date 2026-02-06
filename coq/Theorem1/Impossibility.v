@@ -44,13 +44,11 @@ Definition MemoryReuseAllowed : Prop :=
     In (EvAppConsume A_data V1) t /\
     In (EvAppReuse A_data V_new) t.
 
-(** Transparent Overlay: cannot allocate additional state or modify protocol *)
+(** Transparent Overlay: cannot allocate additional state or modify protocol.
+    Note: This is now captured by the IsTransparent property in the TransparentOverlay record.
+    We keep this definition for backward compatibility with the theorem statements. *)
 Definition Transparent (overlay : TransparentOverlay) : Prop :=
-  (* Decision based only on sender observations *)
-  forall t1 t2 op,
-    sender_view t1 = sender_view t2 ->
-    overlay.(decide_retransmit) (sender_view t1) op =
-    overlay.(decide_retransmit) (sender_view t2) op.
+  IsTransparent overlay.(decide_retransmit).
 
 (** ** Safety and Liveness Definitions *)
 
@@ -68,7 +66,7 @@ Definition ProvidesSafety (overlay : TransparentOverlay) : Prop :=
     In (EvAppReuse A_data V_new) t ->
     op_executed t op ->
     (* Then retransmission decision doesn't cause ghost write *)
-    overlay.(decide_retransmit) (sender_view t) op = false.
+    overlay.(decide_retransmit) t op = false.
 
 (** Liveness: Lost packets are eventually retransmitted.
     Note: A weaker definition would be "Eventually executed OR reported failed."
@@ -80,7 +78,7 @@ Definition ProvidesLiveness (overlay : TransparentOverlay) : Prop :=
     ~ op_executed t op ->
     sender_saw_timeout t op ->
     (* Then it will be retransmitted *)
-    overlay.(decide_retransmit) (sender_view t) op = true.
+    overlay.(decide_retransmit) t op = true.
 
 (** ** The Core Dilemma: Non-Injectivity of sender_view *)
 
@@ -194,7 +192,7 @@ Proof.
 
   (* From Liveness applied to t1:
      t1 has send, no execution, timeout → must retransmit *)
-  assert (Hlive_T1 : overlay.(decide_retransmit) (sender_view t1) the_op = true).
+  assert (Hlive_T1 : overlay.(decide_retransmit) t1 the_op = true).
   {
     unfold t1, the_op.
     apply (Hlive (T1_concrete V1) (OpWrite A_data V1)).
@@ -205,7 +203,7 @@ Proof.
 
   (* From Safety applied to t2:
      t2 has memory reuse and execution → must NOT retransmit *)
-  assert (Hsafe_T2 : overlay.(decide_retransmit) (sender_view t2) the_op = false).
+  assert (Hsafe_T2 : overlay.(decide_retransmit) t2 the_op = false).
   {
     unfold t2, the_op.
     apply (Hsafe (T2_concrete V1 V_new) (OpWrite A_data V1) V_new).
@@ -218,8 +216,8 @@ Proof.
   { unfold t1, t2. apply sender_views_equal. }
 
   (* By Transparent, equal sender_views → equal decisions *)
-  assert (Hdec_eq : overlay.(decide_retransmit) (sender_view t1) the_op =
-                    overlay.(decide_retransmit) (sender_view t2) the_op).
+  assert (Hdec_eq : overlay.(decide_retransmit) t1 the_op =
+                    overlay.(decide_retransmit) t2 the_op).
   {
     apply Htrans. exact Hviews_eq.
   }
@@ -271,16 +269,16 @@ Proof.
   intros overlay Htrans t1 t2 op Hview_eq Hsend1 Hnot_exec1 Htimeout1 Hexec2 [V_new Hreuse2] [Hsafe Hlive].
 
   (* Liveness on t1: must retransmit *)
-  assert (H1 : overlay.(decide_retransmit) (sender_view t1) op = true).
+  assert (H1 : overlay.(decide_retransmit) t1 op = true).
   { apply (Hlive t1 op); assumption. }
 
   (* Safety on t2: must not retransmit *)
-  assert (H2 : overlay.(decide_retransmit) (sender_view t2) op = false).
+  assert (H2 : overlay.(decide_retransmit) t2 op = false).
   { apply (Hsafe t2 op V_new); assumption. }
 
   (* Transparency: equal views → equal decisions *)
-  assert (Heq : overlay.(decide_retransmit) (sender_view t1) op =
-                overlay.(decide_retransmit) (sender_view t2) op).
+  assert (Heq : overlay.(decide_retransmit) t1 op =
+                overlay.(decide_retransmit) t2 op).
   { apply Htrans. exact Hview_eq. }
 
   (* Contradiction *)
