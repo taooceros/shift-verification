@@ -40,15 +40,9 @@ Definition SenderViewLimited : Prop :=
 
 (** Memory Reuse: after consuming, the application may immediately reuse memory *)
 Definition MemoryReuseAllowed : Prop :=
-  forall V1 V_new, exists t,
+  forall V1 V_new, exists t : Trace,
     In (EvAppConsume A_data V1) t /\
     In (EvAppReuse A_data V_new) t.
-
-(** Transport does NOT provide exactly-once delivery *)
-Definition NoExactlyOnce : Prop :=
-  exists t op,
-    In (EvSend op) t /\
-    (execution_count t op = 0 \/ execution_count t op > 1).
 
 (** Transparent Overlay: cannot allocate additional state or modify protocol *)
 Definition Transparent (overlay : TransparentOverlay) : Prop :=
@@ -183,10 +177,9 @@ Theorem impossibility_safe_retransmission :
     Transparent overlay ->
     SilentReceiver ->
     MemoryReuseAllowed ->
-    NoExactlyOnce ->
     ~ (ProvidesSafety overlay /\ ProvidesLiveness overlay).
 Proof.
-  intros overlay Htrans Hsilent Hreuse Hno_eo [Hsafe Hlive].
+  intros overlay Htrans Hsilent Hno_eo [Hsafe Hlive].
 
   (* Choose concrete values *)
   pose (V1 := 1).
@@ -242,14 +235,13 @@ Qed.
 Corollary no_correct_overlay :
   SilentReceiver ->
   MemoryReuseAllowed ->
-  NoExactlyOnce ->
   ~ exists overlay : TransparentOverlay,
       Transparent overlay /\
       ProvidesSafety overlay /\
       ProvidesLiveness overlay.
 Proof.
-  intros Hsilent Hreuse Hno_eo [overlay [Htrans [Hsafe Hlive]]].
-  apply (impossibility_safe_retransmission overlay Htrans Hsilent Hreuse Hno_eo).
+  intros Hsilent Hreuse [overlay [Htrans [Hsafe Hlive]]].
+  apply (impossibility_safe_retransmission overlay Htrans Hsilent Hreuse).
   split; assumption.
 Qed.
 
