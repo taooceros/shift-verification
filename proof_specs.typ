@@ -308,11 +308,6 @@
   Definition MemoryReuseAllowed : Prop :=
     forall V1 V_new, exists t,
       In (EvAppConsume A_data V1) t /\ In (EvAppReuse A_data V_new) t.
-
-  (* No Exactly-Once: transport doesn't guarantee it *)
-  Definition NoExactlyOnce : Prop :=
-    exists t op, In (EvSend op) t /\
-      (execution_count t op = 0 \/ execution_count t op > 1).
   ```
 ]
 
@@ -323,7 +318,7 @@
     forall t op V_new,
       In (EvAppReuse A_data V_new) t ->  (* Memory reused *)
       op_executed t op ->                 (* Operation executed *)
-      overlay.(decide_retransmit) (sender_view t) op = false.
+      overlay.(decide_retransmit) t op = false.
 
   (* Liveness: lost packets are retransmitted *)
   Definition ProvidesLiveness (overlay : TransparentOverlay) : Prop :=
@@ -331,7 +326,7 @@
       In (EvSend op) t ->                 (* Sent *)
       ~ op_executed t op ->               (* Not executed *)
       sender_saw_timeout t op ->          (* Timed out *)
-      overlay.(decide_retransmit) (sender_view t) op = true.
+      overlay.(decide_retransmit) t op = true.
   ```
 ]
 
@@ -342,7 +337,6 @@
       Transparent overlay ->
       SilentReceiver ->
       MemoryReuseAllowed ->
-      NoExactlyOnce ->
       ~ (ProvidesSafety overlay /\ ProvidesLiveness overlay).
   ```
 ]

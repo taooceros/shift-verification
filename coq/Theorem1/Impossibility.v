@@ -177,7 +177,7 @@ Theorem impossibility_safe_retransmission :
     MemoryReuseAllowed ->
     ~ (ProvidesSafety overlay /\ ProvidesLiveness overlay).
 Proof.
-  intros overlay Htrans Hsilent Hno_eo [Hsafe Hlive].
+  intros overlay Htrans Hsilent Hreuse [Hsafe Hlive].
 
   (* Choose concrete values *)
   pose (V1 := 1).

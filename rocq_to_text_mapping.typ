@@ -375,13 +375,7 @@ This document provides exact correspondence between Rocq definitions/theorems an
     In (EvAppConsume A_data V1) t /\\ In (EvAppReuse A_data V_new) t.")
 #prose[_Memory reuse_: after consuming data, the application may immediately overwrite the buffer with new data $V'$.]
 
-#mapping("NoExactlyOnce", "Impossibility.v", "48-51", [Transport lacks exactly-once delivery.])
-#rocq("Definition NoExactlyOnce : Prop :=
-  exists t op, In (EvSend op) t /\\
-    (execution_count t op = 0 \\/ execution_count t op > 1).")
-#prose[_No exactly-once_: the transport layer does not guarantee that every sent operation executes exactly once.]
-
-#mapping("T1_concrete", "Impossibility.v", "118-121", [Concrete packet-loss trace.])
+#mapping("T1_concrete", "Impossibility.v", "112-115", [Concrete packet-loss trace.])
 #rocq("Definition T1_concrete : Trace :=
   [ EvSend op; EvPacketLost op; EvTimeout op ].")
 #prose[$cal(T)_1$: sender sends `op`, packet is lost, sender times out. Operation *not executed*.]
@@ -431,7 +425,7 @@ Proof. unfold T1_concrete, T2_concrete. simpl. reflexivity. Qed.")
     SilentReceiver -> MemoryReuseAllowed ->
     ~ (ProvidesSafety overlay /\\ ProvidesLiveness overlay).
 Proof.
-  intros overlay Htrans Hsilent Hno_eo [Hsafe Hlive].
+  intros overlay Htrans Hsilent Hreuse [Hsafe Hlive].
   pose (V1 := 1). pose (V_new := 2).
   pose (the_op := OpWrite A_data V1).
   pose (t1 := T1_concrete V1). pose (t2 := T2_concrete V1 V_new).
@@ -449,7 +443,7 @@ Proof.
 Qed.")
 #prose[*Theorem 1 (Impossibility of Safe Retransmission):* Under transparency, no overlay can provide both safety and liveness.]
 #annotated-proof(
-  ("intros overlay Htrans Hsilent Hno_eo [Hsafe Hlive].", [*Initial state* — _Goal:_ `forall overlay, Transparent overlay -> SilentReceiver -> ... -> ~ (ProvidesSafety overlay /\\ ProvidesLiveness overlay)`. \
+  ("intros overlay Htrans Hsilent Hreuse [Hsafe Hlive].", [*Initial state* — _Goal:_ `forall overlay, Transparent overlay -> SilentReceiver -> ... -> ~ (ProvidesSafety overlay /\\ ProvidesLiveness overlay)`. \
   Introduce all hypotheses. The `~` unfolds to `... -> False`. The final `[Hsafe Hlive]` destructs the conjunction. _Context:_ `overlay : TransparentOverlay`, `Htrans : Transparent overlay`, `Hsilent : SilentReceiver`, `Hreuse : MemoryReuseAllowed`, `Hsafe : ProvidesSafety overlay`, `Hlive : ProvidesLiveness overlay`. _Goal:_ `False`.]),
   ("pose (V1 := 1). pose (V_new := 2).", [Bind concrete values. _Context adds:_ `V1 := 1 : nat`, `V_new := 2 : nat`. _Goal:_ `False` (unchanged).]),
   ("pose (the_op := OpWrite A_data V1).", [_Context adds:_ `the_op := OpWrite A_data 1 : Op`. _Goal:_ `False`.]),
