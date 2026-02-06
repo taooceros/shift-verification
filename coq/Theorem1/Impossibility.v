@@ -284,3 +284,142 @@ Proof.
   (* Contradiction *)
   rewrite H1, H2 in Heq. discriminate.
 Qed.
+
+(** ** Non-Transparent Overlay CAN Achieve Both Safety and Liveness *)
+
+(** Safety and Liveness for general (non-transparent) overlays.
+    These use the raw Overlay type, not TransparentOverlay. *)
+
+Definition OverlaySafety (overlay : Overlay) : Prop :=
+  forall t op V_new,
+    In (EvAppReuse A_data V_new) t ->
+    op_executed t op ->
+    overlay t op = false.
+
+Definition OverlayLiveness (overlay : Overlay) : Prop :=
+  forall t op,
+    In (EvSend op) t ->
+    ~ op_executed t op ->
+    sender_saw_timeout t op ->
+    overlay t op = true.
+
+(** The "oracle" overlay: can see the full trace and check if operation was executed.
+    This is NOT transparent because it uses information beyond sender_view. *)
+Definition oracle_overlay : Overlay :=
+  fun t op =>
+    (* Retransmit iff operation was NOT executed *)
+    negb (existsb (fun e =>
+      match e with
+      | EvExecute op' _ => op_eq op op'
+      | _ => false
+      end) t).
+
+(** Helper: existsb reflects op_executed *)
+Lemma existsb_op_executed : forall t op,
+  existsb (fun e => match e with EvExecute op' _ => op_eq op op' | _ => false end) t = true <->
+  op_executed t op.
+Proof.
+  intros t op. unfold op_executed.
+  induction t as [| e t' IH].
+  - simpl. split; [discriminate | intros [res H]; destruct H].
+  - simpl. destruct e; try (rewrite IH; split;
+      [intros H; destruct H as [res H]; exists res; right; exact H |
+       intros [res [H | H]]; [discriminate | exists res; exact H]]).
+    (* EvExecute case *)
+    destruct (op_eq op o) eqn:Heq.
+    + simpl. split.
+      * intros _. apply op_eq_eq in Heq. subst. exists o0. left. reflexivity.
+      * intros _. reflexivity.
+    + simpl. rewrite IH. split.
+      * intros [res H]. exists res. right. exact H.
+      * intros [res [H | H]].
+        -- injection H as H1 H2. subst.
+           rewrite op_eq_refl in Heq. discriminate.
+        -- exists res. exact H.
+Qed.
+
+(** The oracle overlay is NOT transparent *)
+Lemma oracle_not_transparent : ~ IsTransparent oracle_overlay.
+Proof.
+  unfold IsTransparent.
+  intros Htrans.
+  (* Use our concrete traces: same sender_view, different execution status *)
+  set (V1 := 1).
+  set (V_new := 2).
+  set (the_op := OpWrite A_data V1).
+  set (t1 := T1_concrete V1).
+  set (t2 := T2_concrete V1 V_new).
+
+  (* t1: operation not executed, so oracle returns true (retransmit) *)
+  assert (H1 : oracle_overlay t1 the_op = true).
+  {
+    unfold oracle_overlay.
+    (* Use the fact that the_op was NOT executed in t1 *)
+    assert (Hnot_exec : ~ op_executed t1 the_op).
+    { unfold t1, the_op, V1. apply T1_not_executed. }
+    destruct (existsb _ t1) eqn:Hexistsb.
+    - exfalso. apply Hnot_exec. rewrite <- existsb_op_executed. exact Hexistsb.
+    - reflexivity.
+  }
+
+  (* t2: operation executed, so oracle returns false (don't retransmit) *)
+  assert (H2 : oracle_overlay t2 the_op = false).
+  {
+    unfold oracle_overlay.
+    (* Use the fact that the_op was executed in t2 *)
+    assert (Hexec : op_executed t2 the_op).
+    { unfold t2, the_op, V1, V_new. apply T2_executed. }
+    rewrite <- existsb_op_executed in Hexec.
+    rewrite Hexec.
+    reflexivity.
+  }
+
+  (* But sender_view t1 = sender_view t2 *)
+  assert (Hview : sender_view t1 = sender_view t2).
+  { unfold t1, t2, V1, V_new. apply sender_views_equal. }
+
+  (* If transparent, decisions would be equal *)
+  specialize (Htrans t1 t2 the_op Hview).
+  rewrite H1, H2 in Htrans.
+  discriminate.
+Qed.
+
+(** The oracle overlay provides safety *)
+Theorem oracle_provides_safety : OverlaySafety oracle_overlay.
+Proof.
+  unfold OverlaySafety, oracle_overlay.
+  intros t op V_new Hreuse Hexec.
+  (* op_executed t op means existsb returns true, so negb returns false *)
+  rewrite <- existsb_op_executed in Hexec.
+  rewrite Hexec.
+  reflexivity.
+Qed.
+
+(** The oracle overlay provides liveness *)
+Theorem oracle_provides_liveness : OverlayLiveness oracle_overlay.
+Proof.
+  unfold OverlayLiveness, oracle_overlay.
+  intros t op Hsend Hnot_exec Htimeout.
+  (* ~ op_executed t op means existsb returns false, so negb returns true *)
+  destruct (existsb _ t) eqn:Hexistsb.
+  - (* existsb = true, contradicts ~ op_executed *)
+    exfalso. apply Hnot_exec.
+    rewrite <- existsb_op_executed. exact Hexistsb.
+  - (* existsb = false, negb returns true *)
+    reflexivity.
+Qed.
+
+(** Main result: A non-transparent overlay CAN achieve both safety and liveness.
+    This demonstrates that transparency is the essential barrier. *)
+Theorem non_transparent_overlay_achieves_both :
+  exists overlay : Overlay,
+    ~ IsTransparent overlay /\
+    OverlaySafety overlay /\
+    OverlayLiveness overlay.
+Proof.
+  exists oracle_overlay.
+  split; [| split].
+  - exact oracle_not_transparent.
+  - exact oracle_provides_safety.
+  - exact oracle_provides_liveness.
+Qed.
