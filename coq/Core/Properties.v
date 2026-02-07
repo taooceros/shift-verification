@@ -116,16 +116,10 @@ Definition IsTransparent (overlay : Overlay) : Prop :=
     sender_view t1 = sender_view t2 ->
     overlay t1 op = overlay t2 op.
 
-(** Bundle an overlay with its transparency proof *)
-Record TransparentOverlay := {
-  decide_retransmit : Overlay;
-  transparency : IsTransparent decide_retransmit;
-}.
-
 (** ** The Core Dilemma *)
 
 (** If an overlay retransmits after timeout, it may violate safety *)
-Definition retransmit_may_violate_safety (overlay : TransparentOverlay) : Prop :=
+Definition retransmit_may_violate_safety (overlay : Overlay) : Prop :=
   exists t1 t2 op,
     (* Traces are indistinguishable *)
     sender_indistinguishable t1 t2 /\
@@ -137,9 +131,9 @@ Definition retransmit_may_violate_safety (overlay : TransparentOverlay) : Prop :
     (op_executed t2 op).       (* t2: packet arrived, retransmit causes double execution *)
 
 (** If an overlay doesn't retransmit after timeout, it may violate liveness *)
-Definition no_retransmit_may_violate_liveness (overlay : TransparentOverlay) : Prop :=
+Definition no_retransmit_may_violate_liveness (overlay : Overlay) : Prop :=
   exists t op,
     sender_saw_timeout t op /\
     ~ op_executed t op /\
-    overlay.(decide_retransmit) t op = false ->
+    overlay t op = false ->
     ~ op_completed t op.

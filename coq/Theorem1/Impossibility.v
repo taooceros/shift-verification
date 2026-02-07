@@ -44,41 +44,35 @@ Definition MemoryReuseAllowed : Prop :=
     In (EvAppConsume A_data V1) t /\
     In (EvAppReuse A_data V_new) t.
 
-(** Transparent Overlay: cannot allocate additional state or modify protocol.
-    Note: This is now captured by the IsTransparent property in the TransparentOverlay record.
-    We keep this definition for backward compatibility with the theorem statements. *)
-Definition Transparent (overlay : TransparentOverlay) : Prop :=
-  IsTransparent overlay.(decide_retransmit).
-
 (** ** Safety and Liveness Definitions *)
 
 (** Safety (Generalized): An overlay is safe if no operation executes more than once.
     This covers both "corrupts new data" and "incremented twice" violations. *)
-Definition ProvidesSafetyStrong (overlay : TransparentOverlay) : Prop :=
+Definition ProvidesSafetyStrong (overlay : Overlay) : Prop :=
   forall t op,
     In (EvSend op) t ->
     execution_count t op <= 1.
 
 (** Safety (Original): Retransmission decision prevents ghost writes *)
-Definition ProvidesSafety (overlay : TransparentOverlay) : Prop :=
+Definition OverlaySafety (overlay : Overlay) : Prop :=
   forall t op V_new,
     (* If data was consumed and memory reused *)
     In (EvAppReuse A_data V_new) t ->
     op_executed t op ->
     (* Then retransmission decision doesn't cause ghost write *)
-    overlay.(decide_retransmit) t op = false.
+    overlay t op = false.
 
 (** Liveness: Lost packets are eventually retransmitted.
     Note: A weaker definition would be "Eventually executed OR reported failed."
     For a transparent overlay promising reliability, strict retransmission is required. *)
-Definition ProvidesLiveness (overlay : TransparentOverlay) : Prop :=
+Definition OverlayLiveness (overlay : Overlay) : Prop :=
   forall t op,
     (* If operation was sent but not executed (packet lost) *)
     In (EvSend op) t ->
     ~ op_executed t op ->
     sender_saw_timeout t op ->
     (* Then it will be retransmitted *)
-    overlay.(decide_retransmit) t op = true.
+    overlay t op = true.
 
 (** ** The Core Dilemma: Non-Injectivity of sender_view *)
 
@@ -90,14 +84,6 @@ Definition sender_view_non_injective : Prop :=
   exists t1 t2 : Trace,
     t1 <> t2 /\
     sender_view t1 = sender_view t2.
-
-(** Stronger: traces with different execution status map to same observation *)
-Definition execution_indistinguishable : Prop :=
-  exists t1 t2 op,
-    ~ op_executed t1 op /\
-    op_executed t2 op /\
-    sender_saw_timeout t1 op /\
-    sender_saw_timeout t2 op.
 
 (** ** Main Theorem *)
 
@@ -171,11 +157,11 @@ Section ConcreteTraces.
 End ConcreteTraces.
 
 Theorem impossibility_safe_retransmission :
-  forall overlay : TransparentOverlay,
-    Transparent overlay ->
+  forall overlay : Overlay,
+    IsTransparent overlay ->
     SilentReceiver ->
     MemoryReuseAllowed ->
-    ~ (ProvidesSafety overlay /\ ProvidesLiveness overlay).
+    ~ (OverlaySafety overlay /\ OverlayLiveness overlay).
 Proof.
   intros overlay Htrans Hsilent Hreuse [Hsafe Hlive].
 
@@ -192,7 +178,7 @@ Proof.
 
   (* From Liveness applied to t1:
      t1 has send, no execution, timeout → must retransmit *)
-  assert (Hlive_T1 : overlay.(decide_retransmit) t1 the_op = true).
+  assert (Hlive_T1 : overlay t1 the_op = true).
   {
     unfold t1, the_op.
     apply (Hlive (T1_concrete V1) (OpWrite A_data V1)).
@@ -203,7 +189,7 @@ Proof.
 
   (* From Safety applied to t2:
      t2 has memory reuse and execution → must NOT retransmit *)
-  assert (Hsafe_T2 : overlay.(decide_retransmit) t2 the_op = false).
+  assert (Hsafe_T2 : overlay t2 the_op = false).
   {
     unfold t2, the_op.
     apply (Hsafe (T2_concrete V1 V_new) (OpWrite A_data V1) V_new).
@@ -216,8 +202,8 @@ Proof.
   { unfold t1, t2. apply sender_views_equal. }
 
   (* By Transparent, equal sender_views → equal decisions *)
-  assert (Hdec_eq : overlay.(decide_retransmit) t1 the_op =
-                    overlay.(decide_retransmit) t2 the_op).
+  assert (Hdec_eq : overlay t1 the_op =
+                    overlay t2 the_op).
   {
     apply Htrans. exact Hviews_eq.
   }
@@ -233,10 +219,10 @@ Qed.
 Corollary no_correct_overlay :
   SilentReceiver ->
   MemoryReuseAllowed ->
-  ~ exists overlay : TransparentOverlay,
-      Transparent overlay /\
-      ProvidesSafety overlay /\
-      ProvidesLiveness overlay.
+  ~ exists overlay : Overlay,
+      IsTransparent overlay /\
+      OverlaySafety overlay /\
+      OverlayLiveness overlay.
 Proof.
   intros Hsilent Hreuse [overlay [Htrans [Hsafe Hlive]]].
   apply (impossibility_safe_retransmission overlay Htrans Hsilent Hreuse).
@@ -255,8 +241,8 @@ Qed.
 
 (** The core theorem directly uses the trace construction *)
 Theorem two_generals_core :
-  forall overlay : TransparentOverlay,
-    Transparent overlay ->
+  forall overlay : Overlay,
+    IsTransparent overlay ->
     forall t1 t2 op,
       sender_view t1 = sender_view t2 ->
       In (EvSend op) t1 ->
@@ -264,21 +250,21 @@ Theorem two_generals_core :
       sender_saw_timeout t1 op ->
       op_executed t2 op ->
       (exists V_new, In (EvAppReuse A_data V_new) t2) ->
-      ~ (ProvidesSafety overlay /\ ProvidesLiveness overlay).
+      ~ (OverlaySafety overlay /\ OverlayLiveness overlay).
 Proof.
   intros overlay Htrans t1 t2 op Hview_eq Hsend1 Hnot_exec1 Htimeout1 Hexec2 [V_new Hreuse2] [Hsafe Hlive].
 
   (* Liveness on t1: must retransmit *)
-  assert (H1 : overlay.(decide_retransmit) t1 op = true).
+  assert (H1 : overlay t1 op = true).
   { apply (Hlive t1 op); assumption. }
 
   (* Safety on t2: must not retransmit *)
-  assert (H2 : overlay.(decide_retransmit) t2 op = false).
+  assert (H2 : overlay t2 op = false).
   { apply (Hsafe t2 op V_new); assumption. }
 
   (* Transparency: equal views → equal decisions *)
-  assert (Heq : overlay.(decide_retransmit) t1 op =
-                overlay.(decide_retransmit) t2 op).
+  assert (Heq : overlay t1 op =
+                overlay t2 op).
   { apply Htrans. exact Hview_eq. }
 
   (* Contradiction *)
@@ -295,21 +281,8 @@ Qed.
     trivially achieve both safety and liveness. This is NOT part of the main
     impossibility result, but demonstrates that our definitions are sensible. *)
 
-(** Safety and Liveness for general (non-transparent) overlays.
-    These use the raw Overlay type, not TransparentOverlay. *)
-
-Definition OverlaySafety (overlay : Overlay) : Prop :=
-  forall t op V_new,
-    In (EvAppReuse A_data V_new) t ->
-    op_executed t op ->
-    overlay t op = false.
-
-Definition OverlayLiveness (overlay : Overlay) : Prop :=
-  forall t op,
-    In (EvSend op) t ->
-    ~ op_executed t op ->
-    sender_saw_timeout t op ->
-    overlay t op = true.
+(** Safety and Liveness for general (non-transparent) overlays. *)
+(* Definitions moved to top of file and renamed OverlaySafety/OverlayLiveness *)
 
 (** The "oracle" overlay: can see the full trace and check if operation was executed.
     This is NOT transparent because it uses information beyond sender_view. *)

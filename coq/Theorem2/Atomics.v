@@ -8,6 +8,7 @@ From ShiftVerification.Core Require Import Memory.
 From ShiftVerification.Core Require Import Operations.
 From ShiftVerification.Core Require Import Traces.
 From ShiftVerification.Core Require Import Properties.
+From ShiftVerification.Theorem1 Require Import Impossibility.
 Import ListNotations.
 
 (** ** Atomic Operation Properties *)
@@ -151,7 +152,7 @@ Definition double_execution_history (op : Op) : History :=
 (** This captures the linearizability violation: a single logical operation
     cannot produce two different responses. *)
 Theorem fadd_double_execution_different_responses : forall a delta,
-  delta > 0 ->
+  delta <> 0 ->
   let op := OpFADD a delta in
   snd (exec_op init_memory op) <> snd (exec_op (fst (exec_op init_memory op)) op).
 Proof.
@@ -164,11 +165,12 @@ Proof.
   intro H.
   (* Use injection to extract the equality 0 = delta *)
   injection H as H0.
-  (* H0 : 0 = delta, but Hdelta : delta > 0 *)
+  (* H0 : 0 = delta, but Hdelta : delta <> 0 *)
   (* Rewrite delta to 0 in Hdelta *)
   subst delta.
-  (* Now Hdelta : 0 > 0, which is absurd *)
-  inversion Hdelta.
+  (* Now Hdelta : 0 <> 0, which is absurd *)
+  apply Hdelta. 
+  reflexivity.
 Qed.
 
 (** Note: The full Linearizable definition is a placeholder (defined as True).
@@ -181,7 +183,7 @@ Qed.
     the client observes behavior inconsistent with a single atomic operation. *)
 
 Theorem retry_not_linearizable : forall a delta,
-  delta > 0 ->
+  delta <> 0 ->
   (* A retry causes two executions with different results *)
   let op := OpFADD a delta in
   snd (exec_op init_memory op) <> snd (exec_op (fst (exec_op init_memory op)) op).
@@ -213,9 +215,9 @@ Proof.
     left. exact Hmneq.
 Qed.
 
-(** Instantiation for FADD: any FADD with delta > 0 cannot be safely retried *)
+(** Instantiation for FADD: any FADD with delta <> 0 cannot be safely retried *)
 Lemma fadd_retry_unsafe : forall a delta m,
-  delta > 0 ->
+  delta <> 0 ->
   let op := OpFADD a delta in
   let (m1, r1) := exec_op m op in
   let (m2, r2) := exec_op m1 op in
@@ -224,8 +226,8 @@ Proof.
   intros a delta m Hdelta.
   apply non_idempotent_retry_unsafe.
   apply fadd_non_idempotent.
-  (* delta > 0 implies delta <> 0 *)
-  lia.
+  (* delta <> 0 implies delta <> 0 *)
+  exact Hdelta.
 Qed.
 
 (** ** Main Result: Atomic Operations Cannot Be Transparently Retransmitted *)
@@ -248,7 +250,7 @@ Qed.
 
 (** Concrete instance: FADD cannot be transparently retransmitted *)
 Corollary fadd_no_transparent_retransmit : forall a delta m,
-  delta > 0 ->
+  delta <> 0 ->
   let op := OpFADD a delta in
   AtomicOp op /\
   (let (m1, r1) := exec_op m op in
@@ -303,16 +305,8 @@ Qed.
     for non-idempotent operations. *)
 
 (** Safety for non-idempotent ops: at most one execution *)
-Definition SafeExecution (t : Trace) (op : Op) : Prop :=
-  execution_count t op <= 1.
-
-(** Liveness: lost packets are retransmitted *)
-Definition LiveRetransmit (overlay : TransparentOverlay) : Prop :=
-  forall t op,
-    In (EvSend op) t ->
-    ~ op_executed t op ->
-    sender_saw_timeout t op ->
-    overlay.(decide_retransmit) t op = true.
+(* Definition SafeExecution (t : Trace) (op : Op) : Prop :=
+  execution_count t op <= 1. *)
 
 (** The core impossibility: identical sender views with different execution status *)
 Definition IndistinguishableExecutionStatus : Prop :=
@@ -328,27 +322,29 @@ Definition IndistinguishableExecutionStatus : Prop :=
 (** Main theorem: No transparent overlay for non-idempotent operations *)
 Theorem no_transparent_overlay_non_idempotent :
   IndistinguishableExecutionStatus ->
-  forall (overlay : TransparentOverlay) (op : Op) (m : Memory),
+  forall (overlay : Overlay),
+    IsTransparent overlay ->
+    forall (op : Op) (m : Memory),
     ~ Idempotent op m ->
     (* Cannot have both safety and liveness *)
-    ~ (LiveRetransmit overlay /\
-       (forall t, op_executed t op -> overlay.(decide_retransmit) t op = false)).
+    ~ (OverlayLiveness overlay /\
+       (forall t, op_executed t op -> overlay t op = false)).
 Proof.
-  intros Hindist overlay op m Hnon_idem [Hlive Hsafe].
+  intros Hindist overlay Htrans op m Hnon_idem [Hlive Hsafe].
   (* Get the two indistinguishable traces *)
   destruct (Hindist op) as [t1 [t2 [Hview_eq [Hsend1 [Hsend2 [Hto1 [Hto2 [Hno_exec1 Hexec2]]]]]]]].
 
   (* From liveness on t1: must retry *)
-  assert (Hretry : overlay.(decide_retransmit) t1 op = true).
+  assert (Hretry : overlay t1 op = true).
   { apply (Hlive t1 op); assumption. }
 
   (* From safety on t2: must not retry *)
-  assert (Hno_retry : overlay.(decide_retransmit) t2 op = false).
+  assert (Hno_retry : overlay t2 op = false).
   { apply (Hsafe t2). assumption. }
 
   (* By transparency: equal sender_views → equal decisions *)
-  assert (Hdec_eq : overlay.(decide_retransmit) t1 op = overlay.(decide_retransmit) t2 op).
-  { apply overlay.(transparency). exact Hview_eq. }
+  assert (Hdec_eq : overlay t1 op = overlay t2 op).
+  { apply Htrans. exact Hview_eq. }
 
   (* Contradiction: true = false *)
   rewrite Hretry, Hno_retry in Hdec_eq.
@@ -358,33 +354,36 @@ Qed.
 (** Corollary: No transparent overlay for atomic operations *)
 Corollary no_transparent_overlay_atomics :
   IndistinguishableExecutionStatus ->
-  forall (overlay : TransparentOverlay),
-    (* For FADD with delta > 0 *)
-    (forall a delta, delta > 0 ->
-      ~ (LiveRetransmit overlay /\
+  forall (overlay : Overlay),
+    IsTransparent overlay ->
+    (* For FADD with delta <> 0 *)
+    (forall a delta, delta <> 0 ->
+      ~ (OverlayLiveness overlay /\
          (forall t, op_executed t (OpFADD a delta) ->
-           overlay.(decide_retransmit) t (OpFADD a delta) = false))) /\
+           overlay t (OpFADD a delta) = false))) /\
     (* For CAS where first execution succeeds and expected <> new_val *)
     (forall a expected new_val,
       mem_read init_memory a = expected ->
       expected <> new_val ->
-      ~ (LiveRetransmit overlay /\
+      ~ (OverlayLiveness overlay /\
          (forall t, op_executed t (OpCAS a expected new_val) ->
-           overlay.(decide_retransmit) t (OpCAS a expected new_val) = false))).
+           overlay t (OpCAS a expected new_val) = false))).
 Proof.
-  intros Hindist overlay.
+  intros Hindist overlay Htrans.
   split.
   - (* FADD case *)
     intros a delta Hdelta.
-    apply (no_transparent_overlay_non_idempotent Hindist overlay (OpFADD a delta) init_memory).
+    apply (no_transparent_overlay_non_idempotent Hindist overlay Htrans (OpFADD a delta) init_memory).
     apply fadd_non_idempotent.
-    (* delta > 0 implies delta <> 0 *)
+    (* delta <> 0 implies delta <> 0 *)
     lia.
   - (* CAS case *)
     intros a expected new_val Hmem Hdiff.
-    apply (no_transparent_overlay_non_idempotent Hindist overlay (OpCAS a expected new_val) init_memory).
+    apply (no_transparent_overlay_non_idempotent Hindist overlay Htrans (OpCAS a expected new_val) init_memory).
     rewrite cas_idempotent_iff.
     intros [Hcontra | Hcontra].
     + apply Hcontra. exact Hmem.
     + apply Hdiff. exact Hcontra.
 Qed.
+
+
