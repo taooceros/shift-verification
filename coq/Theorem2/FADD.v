@@ -16,7 +16,7 @@ Section FADDRetry.
 
 Variable target_addr : Addr.
 Variable delta : nat.
-Hypothesis delta_pos : delta > 0.
+Hypothesis delta_nonzero : delta <> 0.
 
 (** Initial state *)
 Definition fadd_init : Memory := init_memory.
@@ -88,9 +88,9 @@ Theorem fadd_retry_return_corruption :
 Proof.
   rewrite fadd_first_return.
   rewrite fadd_second_return.
-  (* ResFADDVal delta <> ResFADDVal 0 when delta > 0 *)
+  (* ResFADDVal delta <> ResFADDVal 0 when delta <> 0 *)
   intro H. inversion H.
-  (* H0 : delta = 0, but we have delta > 0 *)
+  (* H0 : delta = 0, but we have delta <> 0 *)
   lia.
 Qed.
 
@@ -99,7 +99,7 @@ End FADDRetry.
 (** ** At-Most-Once Violation *)
 
 Theorem fadd_retry_violates_at_most_once : forall a delta,
-  delta > 0 ->
+  delta <> 0 ->
   ~ AtMostOnce (retry_trace (OpFADD a delta)).
 Proof.
   intros a delta Hdelta.
