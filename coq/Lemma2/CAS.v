@@ -7,7 +7,7 @@ From ShiftVerification.Core Require Import Memory.
 From ShiftVerification.Core Require Import Operations.
 From ShiftVerification.Core Require Import Traces.
 From ShiftVerification.Core Require Import Properties.
-From ShiftVerification.Theorem2 Require Import Atomics.
+From ShiftVerification.Lemma2 Require Import Atomics.
 Import ListNotations.
 
 (** ** CAS with Concurrent Modification Scenario *)

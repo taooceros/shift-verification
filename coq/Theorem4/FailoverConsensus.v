@@ -9,7 +9,7 @@ From Stdlib Require Import Lia.
 From ShiftVerification.Core Require Import Memory.
 From ShiftVerification.Core Require Import Operations.
 From ShiftVerification.Core Require Import Traces.
-From ShiftVerification.Theorem3 Require Import ConsensusNumber.
+From ShiftVerification.Theorem4 Require Import ConsensusNumber.
 Import ListNotations.
 
 (** ** The Two "Processes" in Failover *)

@@ -1,4 +1,4 @@
-(** * Theorem 3: Consensus Hierarchy Impossibility *)
+(** * Theorem 4: Consensus Hierarchy Impossibility *)
 
 From Stdlib Require Import Arith.
 From Stdlib Require Import List.
@@ -8,8 +8,8 @@ From ShiftVerification.Core Require Import Memory.
 From ShiftVerification.Core Require Import Operations.
 From ShiftVerification.Core Require Import Traces.
 From ShiftVerification.Core Require Import Properties.
-From ShiftVerification.Theorem3 Require Import ConsensusNumber.
-From ShiftVerification.Theorem3 Require Import FailoverConsensus.
+From ShiftVerification.Theorem4 Require Import ConsensusNumber.
+From ShiftVerification.Theorem4 Require Import FailoverConsensus.
 Import ListNotations.
 
 (** ** The Failover Coordination Problem *)

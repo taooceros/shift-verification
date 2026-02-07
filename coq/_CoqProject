@@ -5,13 +5,13 @@ Core/Operations.v
 Core/Traces.v
 Core/Properties.v
 
-Theorem1/Indistinguishability.v
+Lemma1/Indistinguishability.v
 Theorem1/Impossibility.v
 
-Theorem2/Atomics.v
-Theorem2/FADD.v
-Theorem2/CAS.v
+Lemma2/Atomics.v
+Lemma2/FADD.v
+Lemma2/CAS.v
 
-Theorem3/ConsensusNumber.v
-Theorem3/FailoverConsensus.v
-Theorem3/Hierarchy.v
+Theorem4/ConsensusNumber.v
+Theorem4/FailoverConsensus.v
+Theorem4/Hierarchy.v

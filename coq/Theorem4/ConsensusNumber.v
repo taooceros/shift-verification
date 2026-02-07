@@ -1,4 +1,4 @@
-(** * Theorem 3: Consensus Number Definitions *)
+(** * Theorem 4: Consensus Number Definitions *)
 
 (** This module formalizes Herlihy's Wait-Free Synchronization hierarchy
     and proves consensus number properties for RDMA primitives.

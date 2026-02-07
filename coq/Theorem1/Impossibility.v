@@ -8,7 +8,7 @@ From ShiftVerification.Core Require Import Memory.
 From ShiftVerification.Core Require Import Operations.
 From ShiftVerification.Core Require Import Traces.
 From ShiftVerification.Core Require Import Properties.
-From ShiftVerification.Theorem1 Require Import Indistinguishability.
+From ShiftVerification.Lemma1 Require Import Indistinguishability.
 Import ListNotations.
 
 (** ** Protocol Parameters (same as Indistinguishability.v) *)
