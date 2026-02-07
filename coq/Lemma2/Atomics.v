@@ -95,7 +95,8 @@ Qed.
 
 (** ** Lemma 2: Non-Idempotency *)
 
-Lemma non_idempotent_retry_unsafe : forall op m,
+(** Helper: Non-idempotency implies retransmission is unsafe (state divergence) *)
+Lemma non_idempotency_implies_unsafe : forall op m,
   ~ Idempotent op m ->
   let (m1, r1) := exec_op m op in
   let (m2, r2) := exec_op m1 op in
@@ -108,4 +109,13 @@ Proof.
   destruct (classic (m1 = m2)) as [Hmeq | Hmneq].
   - right. intros Hreq. apply Hnot_idem. split; assumption.
   - left. exact Hmneq.
+Qed.
+
+(** There exist RDMA operations that are non-idempotent. *)
+Lemma lemma2_non_idempotency : exists op m,
+  ~ Idempotent op m.
+Proof.
+  exists (OpFADD 0 1), init_memory.
+  apply fadd_non_idempotent.
+  lia.
 Qed.

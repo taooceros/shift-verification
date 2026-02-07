@@ -205,15 +205,14 @@ Theorem cas_retry_not_generally_safe :
 Proof.
   exists 0.
   unfold concurrent_cas_trace, cas_op, execution_count.
-  simpl.
-  (* Count EvExecute events for OpCAS 0 0 1 *)
+   (* Count EvExecute events for OpCAS 0 0 1 *)
   (* The trace has:
      - EvExecute (OpCAS 0 0 1) result_1
      - EvExecute (OpCAS 0 1 0) result_p3  (different op, doesn't count)
      - EvExecute (OpCAS 0 0 1) result_3
      So count = 2 *)
-  unfold op_eq. simpl.
-  (* OpCAS 0 0 1 vs OpCAS 0 0 1: matches *)
+     (* OpCAS 0 0 1 vs OpCAS 0 0 1: matches *)
   (* OpCAS 0 0 1 vs OpCAS 0 1 0: doesn't match (1 <> 0) *)
+  simpl.
   reflexivity.
 Qed.
