@@ -30,10 +30,6 @@ Definition ConflictingTraces (t1 t2 : Trace) (op : Op) : Prop :=
   (~ op_executed t1 op /\ op_executed t2 op).
 
 (** ** Trace T1: Packet Loss Scenario *)
-Section Indistinguishability.
-Variable A_data : Addr.
-Variable V_new : Val.
-
 (** In T1, the request is lost in the network. The operation never executes. *)
 Definition T1_packet_loss (op : Op) : Trace :=
   [ EvSend op;            (* Sender posts operation *)
@@ -42,13 +38,11 @@ Definition T1_packet_loss (op : Op) : Trace :=
   ].
 
 (** ** Trace T2: ACK Loss Scenario *)
-(** In T2, the operation executes, but the ACK is lost in the network. 
-    Crucially, the application REUSES the memory after execution. *)
-Definition T2_ack_loss (op : Op) : Trace :=
+(** In T2, the operation executes, but the ACK is lost in the network. *)
+Definition T2_ack_loss (op : Op) (res : OpResult) : Trace :=
   [ EvSend op;                  (* Sender posts operation *)
     EvReceive op;               (* Receiver gets the packet *)
-    EvExecute op ResWriteAck;   (* Receiver executes op *)
-    EvAppReuse A_data V_new;    (* Memory is reused! *)
+    EvExecute op res;           (* Receiver executes op *)
     EvAckLost op;               (* ACK was lost *)
     EvTimeout op                (* Sender observes timeout *)
   ].
@@ -56,24 +50,24 @@ Definition T2_ack_loss (op : Op) : Trace :=
 
 (** ** Lemma 1: Indistinguishability *)
 
-(** Helper: The property holds for any operation. *)
-Lemma indistinguishability_universal : forall op,
-  ConflictingTraces (T1_packet_loss op) (T2_ack_loss op) op.
+(** Helper: The property holds for any operation and result. *)
+Lemma indistinguishability_universal : forall op res,
+  ConflictingTraces (T1_packet_loss op) (T2_ack_loss op res) op.
 Proof.
-  intros op.
+  intros op res.
   unfold ConflictingTraces.
   split.
   - unfold T1_packet_loss, T2_ack_loss. simpl. reflexivity.
   - split.
     + unfold op_executed, T1_packet_loss.
-      intros [res H]. simpl in H.
+      intros [r H]. simpl in H.
       destruct H as [H | [H | [H | H]]].
       * discriminate.
       * discriminate.
       * discriminate.
       * contradiction.
     + unfold op_executed, T2_ack_loss.
-      exists ResWriteAck. simpl.
+      exists res. simpl.
       right. right. left. reflexivity.
 Qed.
 
@@ -83,9 +77,7 @@ Lemma lemma1_indistinguishability_conflict : exists t1 t2 op,
   ConflictingTraces t1 t2 op.
 Proof.
   exists (T1_packet_loss (OpWrite 0 0)).
-  exists (T2_ack_loss (OpWrite 0 0)).
+  exists (T2_ack_loss (OpWrite 0 0) ResWriteAck).
   exists (OpWrite 0 0).
   apply indistinguishability_universal.
 Qed.
-
-End Indistinguishability.

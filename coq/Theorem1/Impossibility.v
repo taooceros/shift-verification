@@ -15,33 +15,31 @@ From ShiftVerification.Lemma1 Require Import Indistinguishability.
 From ShiftVerification.Lemma2 Require Import Atomics.
 Import ListNotations.
 
-(** ** System Model & Definitions *)
+(** ** System Definitions *)
 
-(* Concrete parameter for the Safety definition *)
-Parameter A_data : Addr.
-
-(* Overlay and Transparency are imported from Lemma1 *)
-
-(** Safety: Retransmission decision prevents ghost writes *)
-Definition OverlaySafety (overlay : Overlay) : Prop :=
-  forall t op V_new,
-    (* If data was consumed and memory reused *)
-    In (EvAppReuse A_data V_new) t ->
-    op_executed t op ->
-    (* Then retransmission decision doesn't cause ghost write *)
-    overlay t op = false.
-
-(** Liveness: Lost packets are eventually retransmitted.
-    Note: A weaker definition would be "Eventually executed OR reported failed."
-    For a transparent overlay promising reliability, strict retransmission is required. *)
-Definition OverlayLiveness (overlay : Overlay) : Prop :=
+(* 
+   SystemSafety: 
+   For any scenario (like T2), if the operation has already executed, 
+   the overlay must NOT cause a second execution (i.e., must not Retry).
+*)
+Definition SystemSafety (overlay : Overlay) : Prop :=
   forall t op,
-    (* If operation was sent but not executed (packet lost) *)
+    NonIdempotentOp op ->
+    op_executed t op ->          (* If already executed *)
+    sender_saw_timeout t op ->   (* And we are at a decision point *)
+    overlay t op = false.        (* We must NOT retry *)
+
+(* 
+   SystemLiveness: 
+   For any scenario (like T1), if the operation has NOT executed, 
+   the overlay MUST ensure progress (i.e., must Retry).
+*)
+Definition SystemLiveness (overlay : Overlay) : Prop :=
+  forall t op,
     In (EvSend op) t ->
-    ~ op_executed t op ->
-    sender_saw_timeout t op ->
-    (* Then it will be retransmitted *)
-    overlay t op = true.
+    ~ op_executed t op ->        (* If NOT executed *)
+    sender_saw_timeout t op ->   (* And we are at a decision point *)
+    overlay t op = true.         (* We MUST retry *)
 
 (** ** Theorem 1: Impossibility *)
 
@@ -51,19 +49,18 @@ Theorem impossibility_main :
   forall overlay : Overlay,
     IsTransparent overlay ->
     (exists op, NonIdempotentOp op) ->
-    ~ (OverlaySafety overlay /\ OverlayLiveness overlay).
+    ~ (SystemSafety overlay /\ SystemLiveness overlay).
 Proof.
   intros overlay Htrans Hni [Hsafe Hlive].
   
-  (* Pick concrete values *)
-  pose (op := OpWrite A_data 0).
-  pose (V_new := 1).
+  (* Get the non-idempotent operation *)
+  destruct Hni as [op Hop].
 
   (* Instantiate traces from Lemma 1 *)
-  (* T1 (Packet Loss) does not depend on A_data/V_new *)
+  (* T1 (Packet Loss) *)
   pose (t1 := T1_packet_loss op).
-  (* T2 (ACK Loss) depends on A_data and V_new *)
-  pose (t2 := T2_ack_loss A_data V_new op).
+  (* T2 (ACK Loss). We can use any result for the trace existence. *)
+  pose (t2 := T2_ack_loss op ResWriteAck).
 
   (* Apply Liveness to T1 *)
   assert (H_retry : overlay t1 op = true).
@@ -83,26 +80,21 @@ Proof.
   (* Apply Safety to T2 *)
   assert (H_skip : overlay t2 op = false).
   {
-    apply (Hsafe t2 op V_new).
-    - (* In (EvAppReuse A_data V_new) t2 *)
-      unfold t2, T2_ack_loss. simpl.
-      right. right. right. left. reflexivity.
+    apply (Hsafe t2 op Hop).
     - (* op_executed t2 op *)
       unfold t2, T2_ack_loss, op_executed.
       exists ResWriteAck. simpl.
       right. right. left. reflexivity.
+    - (* sender_saw_timeout t2 op *)
+      unfold t2, T2_ack_loss, sender_saw_timeout. simpl.
+      right. right. right. right. left. reflexivity.
   }
 
   (* From Lemma 1, we have conflicting traces *)
-  (* indistinguishability_universal takes A_data V_new op *)
-  pose proof (indistinguishability_universal A_data V_new op) as [H_view_eq _].
+  (* indistinguishability_universal takes op res *)
+  pose proof (indistinguishability_universal op ResWriteAck) as [H_view_eq _].
 
   (* We need to match the posed t1 and t2 with what Lemma 1 provides *)
-  (* Check Lemma 1 definitions:
-     T1_packet_loss op 
-     T2_ack_loss A_data V_new op
-     (This matches our t1 and t2)
-  *)
   
   (* By Transparency, equality of views implies equality of decisions *)
   assert (H_dec_eq : overlay t1 op = overlay t2 op).
